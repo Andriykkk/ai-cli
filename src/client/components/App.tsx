@@ -22,17 +22,17 @@ export const App = () => {
   const initializeApp = async () => {
     try {
       setAppState('loading');
-      
+
       // Test server connection
       const isConnected = await ApiService.testConnection();
       if (!isConnected) {
         throw new Error('Cannot connect to AI CLI server. Please start the server with: python server/main.py');
       }
-      
+
       // Load projects
       await loadProjects();
       setAppState('project-selection');
-      
+
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error occurred');
       setAppState('error');
@@ -78,7 +78,7 @@ export const App = () => {
       setAppState('project-selection');
     }
   };
-  
+
   const handleBackFromProjectSettings = () => {
     // After project settings, go to chat with the project
     if (selectedProject) {
@@ -92,7 +92,7 @@ export const App = () => {
     try {
       const newProject = await ApiService.createProject(projectData);
       await loadProjects();
-      
+
       // Set the new project as selected and go to settings
       setSelectedProject(newProject);
       setAppState('project-settings');
@@ -130,8 +130,8 @@ export const App = () => {
 
     case 'error':
       return (
-        <ErrorDisplay 
-          error={error} 
+        <ErrorDisplay
+          error={error}
           onRetry={initializeApp}
           onExit={() => process.exit(1)}
         />

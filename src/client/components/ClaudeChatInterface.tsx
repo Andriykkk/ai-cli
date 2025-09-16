@@ -20,45 +20,119 @@ interface ChatMessage {
   timestamp: string;
 }
 
-export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({ 
-  project, 
+export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
+  project,
   onBack,
   onOpenSettings
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [currentInput, setCurrentInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [error, setError] = useState('');
   const [scrollPosition, setScrollPosition] = useState(0);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
 
   useEffect(() => {
-    // Add welcome message
-    const welcomeMessage: ChatMessage = {
-      id: 'welcome',
-      type: 'assistant',
-      content: '',
-      timestamp: new Date().toISOString(),
-      sections: [
-        {
-          type: 'bullet',
-          content: `Connected to AI CLI project: **${project.name}**`
-        },
-        {
-          type: 'text',
-          title: '🤖 AI Assistant Ready',
-          content: `I'm ready to help with your ${project.model_provider}/${project.model_name} project.\n\nProject details:\n- Path: ${project.path}\n- Memory: ${project.memory_enabled ? 'Enabled' : 'Disabled'}\n- Tools: ${project.tools_enabled ? 'Enabled' : 'Disabled'}`
-        },
-        {
-          type: 'text',
-          title: '💡 Getting Started',
-          content: 'You can ask me to:\n- Analyze your code\n- Help with debugging\n- Generate new features\n- Review and refactor existing code\n- Answer questions about your project'
-        }
-      ]
-    };
-    
-    setMessages([welcomeMessage]);
+    loadChatHistory();
   }, [project]);
+
+  const loadChatHistory = async () => {
+    try {
+      setIsLoadingHistory(true);
+
+      // Load recent chat history (up to ~2MB worth of messages)
+      const historyResponse = await ApiService.getRecentChatHistory(project.id, 100);
+      const historicalMessages: ChatMessage[] = [];
+
+      // Convert historical messages to ChatMessage format
+      historyResponse.messages.forEach((histMsg) => {
+        // Add user message
+        historicalMessages.push({
+          id: `${histMsg.id}_user`,
+          type: 'user',
+          content: histMsg.message,
+          timestamp: histMsg.timestamp
+        });
+
+        // Add assistant response
+        historicalMessages.push({
+          id: `${histMsg.id}_assistant`,
+          type: 'assistant',
+          content: histMsg.response,
+          timestamp: histMsg.timestamp,
+          sections: parseResponseToSections(histMsg.response)
+        });
+      });
+
+      // Add welcome message if no history exists
+      if (historicalMessages.length === 0) {
+        const welcomeMessage: ChatMessage = {
+          id: 'welcome',
+          type: 'assistant',
+          content: '',
+          timestamp: new Date().toISOString(),
+          sections: [
+            {
+              type: 'bullet',
+              content: `Connected to AI CLI project: **${project.name}**`
+            },
+            {
+              type: 'text',
+              title: '🤖 AI Assistant Ready',
+              content: `I'm ready to help with your ${project.model_provider}/${project.model_name} project.\n\nProject details:\n- Path: ${project.path}\n- Memory: ${project.memory_enabled ? 'Enabled' : 'Disabled'}\n- Tools: ${project.tools_enabled ? 'Enabled' : 'Disabled'}`
+            },
+            {
+              type: 'text',
+              title: '💡 Getting Started',
+              content: 'You can ask me to:\n- Analyze your code\n- Help with debugging\n- Generate new features\n- Review and refactor existing code\n- Answer questions about your project'
+            }
+          ]
+        };
+        setMessages([welcomeMessage]);
+      } else {
+        // Show loaded history with a separator
+        const historySeparator: ChatMessage = {
+          id: 'history_separator',
+          type: 'assistant',
+          content: '',
+          timestamp: new Date().toISOString(),
+          sections: [
+            {
+              type: 'bullet',
+              content: `📜 **Chat History Loaded** - ${historyResponse.messages.length} previous conversations restored`
+            }
+          ]
+        };
+        setMessages([historySeparator, ...historicalMessages]);
+      }
+
+    } catch (err) {
+      console.error('Failed to load chat history:', err);
+
+      // Fall back to welcome message
+      const welcomeMessage: ChatMessage = {
+        id: 'welcome',
+        type: 'assistant',
+        content: '',
+        timestamp: new Date().toISOString(),
+        sections: [
+          {
+            type: 'bullet',
+            content: `Connected to AI CLI project: **${project.name}**`
+          },
+          {
+            type: 'text',
+            title: '⚠️ Chat History',
+            content: 'Could not load previous conversations, but you can start a new chat.'
+          }
+        ]
+      };
+      setMessages([welcomeMessage]);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
 
   useInput((input, key) => {
     if (key.escape) {
@@ -100,7 +174,7 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
       content: message,
       timestamp: new Date().toISOString(),
     };
-    
+
     setMessages((prev) => [...prev, userMessage]);
     setIsLoading(true);
     setError('');
@@ -137,7 +211,7 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
         setMessages((prev) => [...prev, cancelMessage]);
       } else {
         setError(err instanceof Error ? err.message : 'Failed to send message');
-        
+
         const errorMessage: ChatMessage = {
           id: Date.now().toString() + '_error',
           type: 'assistant',
@@ -150,7 +224,7 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
             }
           ]
         };
-        
+
         setMessages((prev) => [...prev, errorMessage]);
       }
     } finally {
@@ -162,10 +236,10 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
   const parseResponseToSections = (response: string): MessageSection[] => {
     const lines = response.split('\n');
     const sections: MessageSection[] = [];
-    
+
     let currentSection: MessageSection | null = null;
     let currentTextContent: string[] = [];
-    
+
     const flushTextContent = () => {
       if (currentTextContent.length > 0) {
         sections.push({
@@ -175,14 +249,14 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
         currentTextContent = [];
       }
     };
-    
+
     for (const line of lines) {
       const trimmed = line.trim();
-      
+
       if (trimmed.startsWith('●') || trimmed.startsWith('•')) {
         // Flush any accumulated text content before bullet
         flushTextContent();
-        
+
         // Bullet point
         sections.push({
           type: 'bullet',
@@ -191,7 +265,7 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
       } else if (trimmed.startsWith('```')) {
         // Flush text before code block
         flushTextContent();
-        
+
         // Code block
         const language = trimmed.substring(3);
         currentSection = {
@@ -214,22 +288,22 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
         flushTextContent();
       }
     }
-    
+
     // Flush any remaining text content
     flushTextContent();
-    
+
     if (currentSection) {
       sections.push(currentSection);
     }
-    
+
     return sections.length > 0 ? sections : [{ type: 'text', content: response }];
   };
 
   const formatTime = (timestamp: string) => {
     try {
-      return new Date(timestamp).toLocaleTimeString([], { 
-        hour: '2-digit', 
-        minute: '2-digit' 
+      return new Date(timestamp).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit'
       });
     } catch {
       return '';
@@ -238,61 +312,62 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
 
   return (
     <Box flexDirection="column" width="100%" height="100%">
-      <Header 
-        title={`Chat - ${project.name}`} 
+      <Header
+        title={`Chat - ${project.name}`}
         subtitle={`${project.model_provider}/${project.model_name} • ${formatTime(new Date().toISOString())}`}
       />
 
       {/* Chat Messages */}
       <Box flexGrow={1} flexDirection="column" padding={1} overflowY="auto">
-        {messages.map((msg, index) => (
-          <Box key={msg.id} flexDirection="column" paddingBottom={1}>
-            {/* Message Header */}
-            <Box>
-              {msg.type === 'user' ? (
-                <Box>
-                  <Text backgroundColor="green" color="white" bold> You </Text>
-                  <Text dimColor> {formatTime(msg.timestamp)}</Text>
-                </Box>
-              ) : (
-                <Box>
-                  <Text backgroundColor="cyan" color="black" bold> AI Assistant </Text>
-                  <Text dimColor> {formatTime(msg.timestamp)}</Text>
-                </Box>
-              )}
-            </Box>
-
-            {/* Message Content */}
-            <Box paddingLeft={0}>
-              {msg.sections ? (
-                <MessageFormatter sections={msg.sections} />
-              ) : (
-                <Text>{msg.content}</Text>
-              )}
-            </Box>
+        {isLoadingHistory ? (
+          <Box flexGrow={1} justifyContent="center" alignItems="center">
+            <LoadingSpinner text="Loading chat history..." />
           </Box>
-        ))}
+        ) : (
+          <>
+            {messages.map((msg, index) => (
+              <Box key={msg.id} flexDirection="column" paddingBottom={1}>
+                {/* Message Header */}
+                <Box>
+                  {msg.type === 'user' ? (
+                    <Box>
+                      <Text backgroundColor="green" color="white" bold> You </Text>
+                      <Text dimColor> {formatTime(msg.timestamp)}</Text>
+                    </Box>
+                  ) : (
+                    <Box>
+                      <Text backgroundColor="cyan" color="black" bold> AI Assistant </Text>
+                      <Text dimColor> {formatTime(msg.timestamp)}</Text>
+                    </Box>
+                  )}
+                </Box>
 
-        {isLoading && (
-          <Box paddingY={1}>
-            <LoadingSpinner text="AI is thinking..." />
-          </Box>
+                {/* Message Content */}
+                <Box paddingLeft={0}>
+                  {msg.sections ? (
+                    <MessageFormatter sections={msg.sections} />
+                  ) : (
+                    <Text>{msg.content}</Text>
+                  )}
+                </Box>
+              </Box>
+            ))}
+
+            {isLoading && (
+              <Box paddingY={1}>
+                <LoadingSpinner text="AI is thinking..." />
+              </Box>
+            )}
+          </>
         )}
       </Box>
 
       {/* Input Area */}
       <Box flexDirection="column" paddingX={1} paddingBottom={1}>
-        {/* Loading indicator above input */}
-        {isLoading && (
-          <Box justifyContent="center" paddingBottom={1}>
-            <LoadingSpinner text="AI is thinking..." />
-          </Box>
-        )}
-        
         {/* Input Box */}
-        <Box 
-          borderStyle="round" 
-          paddingX={1} 
+        <Box
+          borderStyle="round"
+          paddingX={1}
           paddingY={0}
           minHeight={3}
           flexDirection="column"
@@ -303,10 +378,10 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
             {!isLoading && <Text backgroundColor="white" color="black">█</Text>}
           </Text>
         </Box>
-        
+
         <Box justifyContent="center" paddingTop={1}>
           <Text dimColor>
-            {isLoading 
+            {isLoading
               ? 'Press Esc to cancel • AI is processing your request...'
               : 'Type your message and press Enter • ↑↓ Scroll • Ctrl+S Settings • Esc Back to projects'
             }
