@@ -9,6 +9,7 @@ import type { Project } from '../types';
 interface ClaudeChatInterfaceProps {
   project: Project;
   onBack: () => void;
+  onOpenSettings: () => void;
 }
 
 interface ChatMessage {
@@ -21,7 +22,8 @@ interface ChatMessage {
 
 export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({ 
   project, 
-  onBack 
+  onBack,
+  onOpenSettings
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [currentInput, setCurrentInput] = useState('');
@@ -82,6 +84,9 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
         setScrollPosition(Math.max(0, scrollPosition - 1));
       } else if (key.downArrow) {
         setScrollPosition(scrollPosition + 1);
+      } else if ((input === 's' || input === 'S') && key.ctrl) {
+        // Ctrl+S opens settings
+        onOpenSettings();
       } else if (input && !key.ctrl && !key.meta) {
         setCurrentInput((prev) => prev + input);
       }
@@ -303,7 +308,7 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
           <Text dimColor>
             {isLoading 
               ? 'Press Esc to cancel • AI is processing your request...'
-              : 'Type your message and press Enter • ↑↓ Scroll • Esc Back to projects'
+              : 'Type your message and press Enter • ↑↓ Scroll • Ctrl+S Settings • Esc Back to projects'
             }
           </Text>
         </Box>

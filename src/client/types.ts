@@ -33,11 +33,21 @@ export interface ChatResponse {
   timestamp: string;
 }
 
-export type AppState = 'project-selection' | 'chat' | 'loading' | 'error';
+export type AppState = 'project-selection' | 'chat' | 'settings' | 'project-settings' | 'loading' | 'error';
 
 export interface AppContext {
   projects: Project[];
   selectedProject?: Project;
   appState: AppState;
   error?: string;
+}
+
+export interface GlobalSettings {
+  config_name: string;
+  config_data: any;
+}
+
+export interface ProjectSettings {
+  project_id: number;
+  config_data: any;
 }

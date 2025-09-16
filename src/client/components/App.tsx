@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
 import { ProjectSelector } from './ProjectSelector';
 import { ClaudeChatInterface } from './ClaudeChatInterface';
+import { SettingsInterface } from './SettingsInterface';
 import { LoadingSpinner } from './LoadingSpinner';
 import { ErrorDisplay } from './ErrorDisplay';
 import { ApiService } from '../api';
@@ -66,10 +67,35 @@ export const App = () => {
     loadProjects();
   };
 
+  const handleOpenSettings = () => {
+    setAppState('settings');
+  };
+
+  const handleBackFromSettings = () => {
+    if (selectedProject) {
+      setAppState('chat');
+    } else {
+      setAppState('project-selection');
+    }
+  };
+  
+  const handleBackFromProjectSettings = () => {
+    // After project settings, go to chat with the project
+    if (selectedProject) {
+      setAppState('chat');
+    } else {
+      setAppState('project-selection');
+    }
+  };
+
   const handleProjectCreate = async (projectData: { name: string; path: string; description: string }) => {
     try {
-      await ApiService.createProject(projectData);
+      const newProject = await ApiService.createProject(projectData);
       await loadProjects();
+      
+      // Set the new project as selected and go to settings
+      setSelectedProject(newProject);
+      setAppState('project-settings');
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : 'Failed to create project');
     }
@@ -120,6 +146,7 @@ export const App = () => {
           onProjectEdit={handleProjectEdit}
           onProjectDelete={handleProjectDelete}
           onRefresh={loadProjects}
+          onOpenSettings={handleOpenSettings}
         />
       );
 
@@ -128,10 +155,31 @@ export const App = () => {
         <ClaudeChatInterface
           project={selectedProject}
           onBack={handleBackToProjects}
+          onOpenSettings={handleOpenSettings}
         />
       ) : (
         <Box>
           <Text color="red">Error: No project selected</Text>
+        </Box>
+      );
+
+    case 'settings':
+      return (
+        <SettingsInterface
+          onBack={handleBackFromSettings}
+          selectedProject={selectedProject}
+        />
+      );
+
+    case 'project-settings':
+      return selectedProject ? (
+        <SettingsInterface
+          onBack={handleBackFromProjectSettings}
+          selectedProject={selectedProject}
+        />
+      ) : (
+        <Box>
+          <Text color="red">Error: No project selected for settings</Text>
         </Box>
       );
 

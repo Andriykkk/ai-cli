@@ -14,6 +14,7 @@ interface ProjectSelectorProps {
   onProjectEdit: (projectId: number, updates: { name?: string; path?: string; description?: string }) => Promise<void>;
   onProjectDelete: (projectId: number) => Promise<void>;
   onRefresh: () => Promise<void>;
+  onOpenSettings: () => void;
 }
 
 type Mode = 'list' | 'create' | 'edit' | 'delete-confirm';
@@ -25,6 +26,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
   onProjectEdit,
   onProjectDelete,
   onRefresh,
+  onOpenSettings,
 }) => {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [mode, setMode] = useState<Mode>('list');
@@ -81,6 +83,8 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
       }
     } else if (input === 'r') {
       handleRefresh();
+    } else if (input === 's' || input === 'S') {
+      onOpenSettings();
     } else if (input === 'q') {
       exit();
     }
@@ -229,6 +233,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
                 'e Edit',
                 'd Delete',
                 'r Refresh',
+                's Settings',
                 'q Quit',
               ]
             : ['Esc Cancel']
