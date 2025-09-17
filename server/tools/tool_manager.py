@@ -176,6 +176,27 @@ class ToolManager:
         """
         return [tool.get_schema() for tool in self.tools.values()]
     
+    def get_available_tools(self) -> List['ToolDefinition']:
+        """
+        Get available tools as ToolDefinition objects
+        
+        Returns:
+            List of ToolDefinition objects for all registered tools
+        """
+        from core.base_types import ToolDefinition
+        
+        tool_definitions = []
+        for tool in self.tools.values():
+            schema = tool.get_schema()
+            tool_def = ToolDefinition(
+                name=schema["name"],
+                description=schema["description"], 
+                parameters=schema["parameters"]
+            )
+            tool_definitions.append(tool_def)
+        
+        return tool_definitions
+    
     def get_enabled_tools_schema(self, enabled_tools: List[str]) -> List[Dict[str, Any]]:
         """
         Get schema definitions for specific enabled tools

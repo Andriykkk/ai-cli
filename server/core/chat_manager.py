@@ -97,10 +97,12 @@ class ChatManager:
             yield ConversationStep(state=ConversationState.GENERATING)
             
             try:
+                print("Generating AI response...", self.messages, self.available_tools)
                 response = await self.provider.generate(
                     messages=self.messages,
                     tools=self.available_tools
                 )
+                print("Generated AI response:", response)
                 
                 # Add AI response to conversation
                 ai_message = ChatMessage(

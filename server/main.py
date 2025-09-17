@@ -5,6 +5,7 @@ AI CLI Server - FastAPI backend for project management and AI interactions
 """
 
 import os
+import logging
 from datetime import datetime
 from typing import List, Optional
 from contextlib import asynccontextmanager
@@ -23,6 +24,19 @@ from routes.projects import router as projects_router
 from routes.chat import router as chat_router
 from routes.settings import router as settings_router
 from routes.chat_memory import router as chat_memory_router
+
+# Import tools
+from tools.tool_manager import get_tool_manager
+# from tools.filesystem.read_file_tool import ReadFileTool
+# from tools.filesystem.write_file_tool import WriteFileTool
+# from tools.filesystem.list_directory_tool import ListDirectoryTool
+# from tools.filesystem.search_files_tool import SearchFilesTool
+from tools.shell.run_command_tool import RunCommandTool
+# from tools.shell.get_environment_tool import GetEnvironmentTool
+# from tools.web.fetch_url_tool import FetchUrlTool
+# from tools.web.web_search_tool import WebSearchTool
+# from tools.memory.save_memory_tool import SaveMemoryTool
+# from tools.memory.retrieve_memory_tool import RetrieveMemoryTool
 
 # Database setup
 DB_PATH = Path.home() / ".ai-cli" / "ai_cli.db"
@@ -87,10 +101,45 @@ def init_database():
         
         conn.commit()
 
+def init_tools():
+    """Initialize and register all available tools"""
+    tool_manager = get_tool_manager()
+    
+    # Filesystem tools
+    # tool_manager.register_tool(ReadFileTool())
+    # tool_manager.register_tool(WriteFileTool())
+    # tool_manager.register_tool(ListDirectoryTool())
+    # tool_manager.register_tool(SearchFilesTool())
+    
+    # Shell tools
+    tool_manager.register_tool(RunCommandTool())
+    # tool_manager.register_tool(GetEnvironmentTool())
+    
+    # Web tools
+    # tool_manager.register_tool(FetchUrlTool())
+    # tool_manager.register_tool(WebSearchTool())
+    
+    # Memory tools
+    # tool_manager.register_tool(SaveMemoryTool())
+    # tool_manager.register_tool(RetrieveMemoryTool())
+    
+    print(f"Initialized {len(tool_manager.get_tool_names())} tools: {', '.join(tool_manager.get_tool_names())}")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize database on startup"""
+    """Initialize database and tools on startup"""
+    # Setup logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(),  # Console output
+            logging.FileHandler('ai_cli_server.log')  # Log file
+        ]
+    )
+    
     init_database()
+    init_tools()
     yield
 
 # FastAPI app

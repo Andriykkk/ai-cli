@@ -60,6 +60,123 @@ export class ApiService {
     return response.data;
   }
 
+  // Streaming chat with tool approval
+  static async sendMessageStream(message: ChatMessage, signal?: AbortSignal): Promise<ReadableStream<ConversationStep>> {
+    console.log('🚀 Sending stream request:', { message, url: `${API_BASE_URL}/chat/stream` });
+    
+    const response = await fetch(`${API_BASE_URL}/chat/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(message),
+      signal,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'Unknown error');
+      console.error('❌ Stream request failed:', {
+        status: response.status,
+        statusText: response.statusText,
+        url: response.url,
+        errorBody: errorText
+      });
+      throw new Error(`HTTP ${response.status}: ${response.statusText} - ${errorText}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('No response body');
+    }
+
+    const decoder = new TextDecoder();
+    
+    return new ReadableStream<ConversationStep>({
+      start(controller) {
+        function pump(): Promise<void> {
+          return reader.read().then(({ done, value }) => {
+            if (done) {
+              controller.close();
+              return;
+            }
+
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n');
+            
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                try {
+                  const data = JSON.parse(line.slice(6));
+                  controller.enqueue(data);
+                } catch (e) {
+                  console.error('Failed to parse SSE data:', e);
+                }
+              }
+            }
+
+            return pump();
+          });
+        }
+
+        return pump();
+      }
+    });
+  }
+
+  // Tool approval
+  static async sendToolApproval(approval: ToolApprovalRequest, signal?: AbortSignal): Promise<ReadableStream<ConversationStep>> {
+    const response = await fetch(`${API_BASE_URL}/chat/tool-approval`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(approval),
+      signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('No response body');
+    }
+
+    const decoder = new TextDecoder();
+    
+    return new ReadableStream<ConversationStep>({
+      start(controller) {
+        function pump(): Promise<void> {
+          return reader.read().then(({ done, value }) => {
+            if (done) {
+              controller.close();
+              return;
+            }
+
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n');
+            
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                try {
+                  const data = JSON.parse(line.slice(6));
+                  controller.enqueue(data);
+                } catch (e) {
+                  console.error('Failed to parse SSE data:', e);
+                }
+              }
+            }
+
+            return pump();
+          });
+        }
+
+        return pump();
+      }
+    });
+  }
+
   // Global Settings
   static async getGlobalSettings(): Promise<any> {
     const response = await api.get('/settings/global');

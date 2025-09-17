@@ -3,8 +3,11 @@ import { Box, Text, useInput } from 'ink';
 import { Header } from './Header';
 import { LoadingSpinner } from './LoadingSpinner';
 import { MessageFormatter, MessageSection } from './MessageFormatters';
+import { ToolApprovalComponent } from './ToolApprovalComponent';
+import { ToolResultDisplay } from './ToolResultDisplay';
 import { ApiService } from '../api';
 import type { Project } from '../types';
+import type { ConversationStep, ToolCall } from '../tool-types';
 
 interface ClaudeChatInterfaceProps {
   project: Project;
@@ -18,7 +21,16 @@ interface ChatMessage {
   content: string;
   sections?: MessageSection[];
   timestamp: string;
+  toolCalls?: ToolCall[];
+  toolResults?: Array<{
+    tool_call_id: string;
+    name: string;
+    content: string;
+    success: boolean;
+  }>;
 }
+
+type ConversationState = 'idle' | 'generating' | 'tool_approval' | 'tool_executing' | 'completed';
 
 export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
   project,
@@ -27,11 +39,15 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [currentInput, setCurrentInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [conversationState, setConversationState] = useState<ConversationState>('idle');
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [error, setError] = useState('');
   const [scrollPosition, setScrollPosition] = useState(0);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const [pendingToolCalls, setPendingToolCalls] = useState<ToolCall[]>([]);
+  const [pendingContent, setPendingContent] = useState<string>('');
+  const [toolResultsVisible, setToolResultsVisible] = useState<boolean>(true);
+  const [currentStream, setCurrentStream] = useState<ReadableStream<ConversationStep> | null>(null);
 
   useEffect(() => {
     loadChatHistory();
@@ -135,23 +151,30 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
   };
 
   useInput((input, key) => {
+    // Handle tool approval state separately
+    if (conversationState === 'tool_approval') {
+      return; // Let ToolApprovalComponent handle input
+    }
+
     if (key.escape) {
-      if (isLoading && abortController) {
+      if (conversationState !== 'idle' && abortController) {
         // Cancel current request
         abortController.abort();
         setAbortController(null);
-        setIsLoading(false);
+        setConversationState('idle');
+        setPendingToolCalls([]);
+        setPendingContent('');
       } else {
         // Go back to projects
         onBack();
       }
     } else if (key.return) {
-      if (currentInput.trim() && !isLoading) {
+      if (currentInput.trim() && conversationState === 'idle') {
         handleSendMessage(currentInput.trim());
         setCurrentInput('');
       }
-    } else if (!isLoading) {
-      // Only allow input modification when not loading
+    } else if (conversationState === 'idle') {
+      // Only allow input modification when idle
       if (key.backspace || key.delete) {
         setCurrentInput((prev) => prev.slice(0, -1));
       } else if (key.upArrow) {
@@ -161,6 +184,9 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
       } else if ((input === 's' || input === 'S') && key.ctrl) {
         // Ctrl+S opens settings
         onOpenSettings();
+      } else if ((input === 'r' || input === 'R') && key.ctrl) {
+        // Ctrl+R toggles tool results visibility
+        setToolResultsVisible(prev => !prev);
       } else if (input && !key.ctrl && !key.meta) {
         setCurrentInput((prev) => prev + input);
       }
@@ -176,7 +202,7 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
     };
 
     setMessages((prev) => [...prev, userMessage]);
-    setIsLoading(true);
+    setConversationState('generating');
     setError('');
 
     // Create abort controller for cancellation
@@ -184,21 +210,14 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
     setAbortController(controller);
 
     try {
-      const response = await ApiService.sendMessage({
+      const stream = await ApiService.sendMessageStream({
         message,
         project_id: project.id,
       }, controller.signal);
 
-      // Parse response into Claude-style sections
-      const assistantMessage: ChatMessage = {
-        id: Date.now().toString() + '_assistant',
-        type: 'assistant',
-        content: response.response,
-        timestamp: response.timestamp,
-        sections: parseResponseToSections(response.response)
-      };
+      setCurrentStream(stream);
+      await processConversationStream(stream);
 
-      setMessages((prev) => [...prev, assistantMessage]);
     } catch (err) {
       // Don't show error if request was aborted
       if (err instanceof Error && (err.name === 'AbortError' || err.name === 'CanceledError' || err.message.includes('canceled'))) {
@@ -228,7 +247,104 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
         setMessages((prev) => [...prev, errorMessage]);
       }
     } finally {
-      setIsLoading(false);
+      setConversationState('idle');
+      setAbortController(null);
+      setCurrentStream(null);
+    }
+  };
+
+  const processConversationStream = async (stream: ReadableStream<ConversationStep>) => {
+    const reader = stream.getReader();
+    
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) break;
+        
+        await handleConversationStep(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  };
+
+  const handleConversationStep = async (step: ConversationStep) => {
+    switch (step.state) {
+      case 'generating':
+        setConversationState('generating');
+        break;
+        
+      case 'tool_approval':
+        setConversationState('tool_approval');
+        setPendingContent(step.content || '');
+        setPendingToolCalls(step.tool_calls || []);
+        break;
+        
+      case 'tool_executing':
+        setConversationState('tool_executing');
+        break;
+        
+      case 'completed':
+        if (step.error) {
+          setError(step.error);
+          const errorMessage: ChatMessage = {
+            id: Date.now().toString() + '_error',
+            type: 'assistant',
+            content: '',
+            timestamp: new Date().toISOString(),
+            sections: [
+              {
+                type: 'bullet',
+                content: `❌ Error: ${step.error}`
+              }
+            ]
+          };
+          setMessages((prev) => [...prev, errorMessage]);
+        } else if (step.content) {
+          const assistantMessage: ChatMessage = {
+            id: Date.now().toString() + '_assistant',
+            type: 'assistant',
+            content: step.content,
+            timestamp: new Date().toISOString(),
+            sections: parseResponseToSections(step.content),
+            toolResults: step.tool_results
+          };
+          setMessages((prev) => [...prev, assistantMessage]);
+        }
+        
+        setConversationState('idle');
+        setPendingToolCalls([]);
+        setPendingContent('');
+        break;
+    }
+  };
+
+  const handleToolApproval = async (approvedTools: string[], deniedTools: string[]) => {
+    setConversationState('tool_executing');
+    
+    try {
+      const stream = await ApiService.sendToolApproval({
+        project_id: project.id,
+        approved_tools: approvedTools,
+        denied_tools: deniedTools
+      });
+
+      await processConversationStream(stream);
+      
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to process tool approval');
+      setConversationState('idle');
+    }
+  };
+
+  const handleToolApprovalCancel = () => {
+    setConversationState('idle');
+    setPendingToolCalls([]);
+    setPendingContent('');
+    
+    if (abortController) {
+      abortController.abort();
       setAbortController(null);
     }
   };
@@ -350,44 +466,70 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
                     <Text>{msg.content}</Text>
                   )}
                 </Box>
+
+                {/* Tool Results Display */}
+                {msg.toolResults && msg.toolResults.length > 0 && (
+                  <ToolResultDisplay 
+                    toolResults={msg.toolResults} 
+                    isVisible={toolResultsVisible} 
+                  />
+                )}
               </Box>
             ))}
 
-            {isLoading && (
+            {/* Loading States */}
+            {conversationState === 'generating' && (
               <Box paddingY={1}>
                 <LoadingSpinner text="AI is thinking..." />
+              </Box>
+            )}
+
+            {conversationState === 'tool_executing' && (
+              <Box paddingY={1}>
+                <LoadingSpinner text="Executing tools..." />
               </Box>
             )}
           </>
         )}
       </Box>
 
-      {/* Input Area */}
-      <Box flexDirection="column" paddingX={1} paddingBottom={1}>
-        {/* Input Box */}
-        <Box
-          borderStyle="round"
-          paddingX={1}
-          paddingY={0}
-          minHeight={3}
-          flexDirection="column"
-          borderColor={isLoading ? 'yellow' : undefined}
-        >
-          <Text>
-            {currentInput}
-            {!isLoading && <Text backgroundColor="white" color="black">█</Text>}
-          </Text>
-        </Box>
+      {/* Tool Approval Component */}
+      {conversationState === 'tool_approval' && (
+        <ToolApprovalComponent
+          content={pendingContent}
+          toolCalls={pendingToolCalls}
+          onApproval={handleToolApproval}
+          onCancel={handleToolApprovalCancel}
+        />
+      )}
 
-        <Box justifyContent="center" paddingTop={1}>
-          <Text dimColor>
-            {isLoading
-              ? 'Press Esc to cancel • AI is processing your request...'
-              : 'Type your message and press Enter • ↑↓ Scroll • Ctrl+S Settings • Esc Back to projects'
-            }
-          </Text>
+      {/* Input Area - Hidden during tool approval */}
+      {conversationState !== 'tool_approval' && (
+        <Box flexDirection="column" paddingX={1} paddingBottom={1}>
+          {/* Input Box */}
+          <Box
+            borderStyle="round"
+            paddingX={1}
+            paddingY={0}
+            minHeight={3}
+            flexDirection="column"
+            borderColor={conversationState !== 'idle' ? 'yellow' : undefined}
+          >
+            <Text>
+              {currentInput}
+              {conversationState === 'idle' && <Text backgroundColor="white" color="black">█</Text>}
+            </Text>
+          </Box>
+
+          <Box justifyContent="center" paddingTop={1}>
+            <Text dimColor>
+              {conversationState === 'generating' && 'Press Esc to cancel • AI is generating response...'}
+              {conversationState === 'tool_executing' && 'Press Esc to cancel • Executing approved tools...'}
+              {conversationState === 'idle' && 'Type your message and press Enter • ↑↓ Scroll • Ctrl+S Settings • Ctrl+R Toggle tool results • Esc Back to projects'}
+            </Text>
+          </Box>
         </Box>
-      </Box>
+      )}
     </Box>
   );
 };

@@ -5,11 +5,13 @@ API endpoints for chat functionality
 
 import asyncio
 import json
+import logging
+import traceback
 from datetime import datetime
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 import sqlite3
 from pathlib import Path
 
@@ -66,6 +68,9 @@ async def is_chat_memory_enabled(project_id: int) -> bool:
         # Default to enabled on error
         print(f"Error checking chat memory setting: {e}")
         return True
+
+# Setup logger
+logger = logging.getLogger(__name__)
 
 # Create router
 router = APIRouter(tags=["chat"])
@@ -203,6 +208,7 @@ How can I help you with your project today?"""
 async def get_project_settings(project_id: int) -> dict:
     """Get project settings including AI provider config"""
     try:
+        logger.info(f"Getting settings for project {project_id}")
         with get_db() as conn:
             cursor = conn.execute(
                 "SELECT config_data FROM project_settings WHERE project_id = ?", 
@@ -211,71 +217,101 @@ async def get_project_settings(project_id: int) -> dict:
             row = cursor.fetchone()
             
             if row:
-                return json.loads(row["config_data"])
+                config_data = json.loads(row["config_data"])
+                logger.info(f"Found project settings: {config_data}")
+                return config_data
             else:
+                logger.warning(f"No settings found for project {project_id}, using defaults")
                 # Default settings
-                return {
+                default_settings = {
                     "ai_provider": {
                         "type": {"value": "gemini"},
                         "api_key": {"value": ""},
                         "model": {"value": "gemini-pro"}
                     }
                 }
+                return default_settings
     except Exception as e:
-        print(f"Error getting project settings: {e}")
+        logger.error(f"Error getting project settings: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return {}
 
 async def create_chat_manager(project_id: int, project_path: str) -> Optional[ChatManager]:
     """Create ChatManager with configured AI provider"""
-    settings = await get_project_settings(project_id)
-    ai_config = settings.get("ai_provider", {})
-    
-    provider_type = ai_config.get("type", {}).get("value", "gemini")
-    api_key = ai_config.get("api_key", {}).get("value", "")
-    model = ai_config.get("model", {}).get("value", "gemini-pro")
-    
-    if not api_key:
+    try:
+        settings = await get_project_settings(project_id)
+        ai_config = settings.get("ai_provider", {})
+        
+        # Handle the actual database structure
+        default_provider = ai_config.get("default_provider", {}).get("value", "gemini")
+        providers = ai_config.get("providers", {})
+        
+        # Get provider config
+        provider_config = providers.get(default_provider, {})
+        api_key = provider_config.get("api_key", {}).get("value", "")
+        model = provider_config.get("model", {}).get("value", "gemini-pro")
+        
+        logger.info(f"Creating chat manager: provider={default_provider}, model={model}, has_api_key={bool(api_key)}")
+        
+        if not api_key:
+            logger.error(f"No API key configured for provider {default_provider}")
+            return None
+        
+        # Create provider (only Gemini for now)
+        if default_provider == "gemini":
+            provider = GeminiProvider(api_key=api_key, model=model)
+        else:
+            logger.error(f"Unsupported provider type: {default_provider}")
+            return None
+        
+        # Create chat manager
+        chat_manager = ChatManager(
+            provider=provider,
+            project_id=project_id,
+            project_path=project_path
+        )
+        
+        # Set available tools
+        tool_manager = get_tool_manager()
+        available_tools = tool_manager.get_available_tools()
+        logger.info(f"Setting {len(available_tools)} available tools")
+        chat_manager.set_available_tools(available_tools)
+        
+        return chat_manager
+        
+    except Exception as e:
+        logger.error(f"Error creating chat manager: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return None
-    
-    # Create provider (only Gemini for now)
-    if provider_type == "gemini":
-        provider = GeminiProvider(api_key=api_key, model=model)
-    else:
-        return None
-    
-    # Create chat manager
-    chat_manager = ChatManager(
-        provider=provider,
-        project_id=project_id,
-        project_path=project_path
-    )
-    
-    # Set available tools
-    tool_manager = get_tool_manager()
-    available_tools = tool_manager.get_available_tools()
-    chat_manager.set_available_tools(available_tools)
-    
-    return chat_manager
 
 @router.post("/chat/stream")
 async def send_message_stream(chat_message: ChatMessage):
     """Send a message to AI with streaming response and tool calling"""
     
-    # Get project path from database
     try:
+        logger.info(f"Stream request for project {chat_message.project_id}")
+        
+        # Get project path from database
         with get_db() as conn:
             cursor = conn.execute("SELECT path FROM projects WHERE id = ?", (chat_message.project_id,))
             row = cursor.fetchone()
             if not row:
+                logger.error(f"Project {chat_message.project_id} not found")
                 raise HTTPException(status_code=404, detail="Project not found")
             project_path = row["path"]
+        
+        # Create chat manager
+        chat_manager = await create_chat_manager(chat_message.project_id, project_path)
+        if not chat_manager:
+            logger.error(f"Failed to create chat manager for project {chat_message.project_id}")
+            raise HTTPException(status_code=400, detail="AI provider not configured or API key missing")
+            
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-    
-    # Create chat manager
-    chat_manager = await create_chat_manager(chat_message.project_id, project_path)
-    if not chat_manager:
-        raise HTTPException(status_code=400, detail="AI provider not configured or API key missing")
+        logger.error(f"Unexpected error in stream endpoint: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
     
     # Get conversation history if chat memory is enabled
     conversation_history = []
