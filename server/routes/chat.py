@@ -6,12 +6,18 @@ API endpoints for chat functionality
 import asyncio
 import json
 from datetime import datetime
+from typing import List, Optional
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import sqlite3
 from pathlib import Path
 
 from memory.chat_memory import get_chat_memory
+from core.chat_manager import ChatManager, ConversationStep
+from core.base_types import ChatMessage as CoreChatMessage, ToolDefinition
+from providers.gemini_provider import GeminiProvider
+from tools.tool_manager import get_tool_manager
 
 # Request/Response models
 class ChatMessage(BaseModel):
@@ -21,6 +27,11 @@ class ChatMessage(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     timestamp: str
+
+class ToolApprovalRequest(BaseModel):
+    project_id: int
+    approved_tools: List[str]
+    denied_tools: List[str]
 
 # Database setup
 DB_PATH = Path.home() / ".ai-cli" / "ai_cli.db"
@@ -189,27 +200,180 @@ Which specific file or function would you like me to analyze in detail?"""
 How can I help you with your project today?"""
 
 
-@router.post("/chat", response_model=ChatResponse)
-async def send_message(chat_message: ChatMessage):
-    """Send a message to AI (placeholder for now)"""
-    # TODO: Integrate with actual AI models (DeepSeek, OpenAI, Ollama)
+async def get_project_settings(project_id: int) -> dict:
+    """Get project settings including AI provider config"""
+    try:
+        with get_db() as conn:
+            cursor = conn.execute(
+                "SELECT config_data FROM project_settings WHERE project_id = ?", 
+                (project_id,)
+            )
+            row = cursor.fetchone()
+            
+            if row:
+                return json.loads(row["config_data"])
+            else:
+                # Default settings
+                return {
+                    "ai_provider": {
+                        "type": {"value": "gemini"},
+                        "api_key": {"value": ""},
+                        "model": {"value": "gemini-pro"}
+                    }
+                }
+    except Exception as e:
+        print(f"Error getting project settings: {e}")
+        return {}
+
+async def create_chat_manager(project_id: int, project_path: str) -> Optional[ChatManager]:
+    """Create ChatManager with configured AI provider"""
+    settings = await get_project_settings(project_id)
+    ai_config = settings.get("ai_provider", {})
     
-    # Add 1 second delay to demo the loader
-    await asyncio.sleep(1)
+    provider_type = ai_config.get("type", {}).get("value", "gemini")
+    api_key = ai_config.get("api_key", {}).get("value", "")
+    model = ai_config.get("model", {}).get("value", "gemini-pro")
     
-    # Create a Claude-style response for demo
-    response = generate_claude_style_response(chat_message.message)
+    if not api_key:
+        return None
     
-    # Save to chat history using ChatMemory class (if chat memory is enabled)
+    # Create provider (only Gemini for now)
+    if provider_type == "gemini":
+        provider = GeminiProvider(api_key=api_key, model=model)
+    else:
+        return None
+    
+    # Create chat manager
+    chat_manager = ChatManager(
+        provider=provider,
+        project_id=project_id,
+        project_path=project_path
+    )
+    
+    # Set available tools
+    tool_manager = get_tool_manager()
+    available_tools = tool_manager.get_available_tools()
+    chat_manager.set_available_tools(available_tools)
+    
+    return chat_manager
+
+@router.post("/chat/stream")
+async def send_message_stream(chat_message: ChatMessage):
+    """Send a message to AI with streaming response and tool calling"""
+    
+    # Get project path from database
+    try:
+        with get_db() as conn:
+            cursor = conn.execute("SELECT path FROM projects WHERE id = ?", (chat_message.project_id,))
+            row = cursor.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Project not found")
+            project_path = row["path"]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    
+    # Create chat manager
+    chat_manager = await create_chat_manager(chat_message.project_id, project_path)
+    if not chat_manager:
+        raise HTTPException(status_code=400, detail="AI provider not configured or API key missing")
+    
+    # Get conversation history if chat memory is enabled
+    conversation_history = []
     if await is_chat_memory_enabled(chat_message.project_id):
         chat_memory = get_chat_memory()
-        chat_memory.save_message(
-            project_id=chat_message.project_id,
-            user_message=chat_message.message,
-            ai_response=response
-        )
+        history = chat_memory.get_recent_history(chat_message.project_id, limit=20)
+        
+        # Convert to CoreChatMessage format
+        for msg in history:
+            conversation_history.append(CoreChatMessage(
+                role="user",
+                content=msg.user_message
+            ))
+            conversation_history.append(CoreChatMessage(
+                role="assistant",
+                content=msg.ai_response
+            ))
     
-    return ChatResponse(
-        response=response,
-        timestamp=datetime.now().isoformat()
+    async def stream_generator():
+        try:
+            async for step in chat_manager.start_conversation(
+                user_message=chat_message.message,
+                conversation_history=conversation_history
+            ):
+                # Send step as JSON line
+                step_data = {
+                    "type": "conversation_step",
+                    "state": step.state.value,
+                    "content": step.content,
+                    "tool_calls": step.tool_calls,
+                    "tool_results": step.tool_results,
+                    "error": step.error,
+                    "timestamp": datetime.now().isoformat()
+                }
+                yield f"data: {json.dumps(step_data)}\n\n"
+                
+        except Exception as e:
+            error_data = {
+                "type": "error",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat()
+            }
+            yield f"data: {json.dumps(error_data)}\n\n"
+    
+    return StreamingResponse(
+        stream_generator(),
+        media_type="text/plain",
+        headers={"Cache-Control": "no-cache"}
+    )
+
+@router.post("/chat/tool-approval")
+async def handle_tool_approval(approval_request: ToolApprovalRequest):
+    """Handle user's tool approval decision"""
+    
+    # Get project path from database
+    try:
+        with get_db() as conn:
+            cursor = conn.execute("SELECT path FROM projects WHERE id = ?", (approval_request.project_id,))
+            row = cursor.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Project not found")
+            project_path = row["path"]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    
+    # Create chat manager (should reuse conversation state in real implementation)
+    chat_manager = await create_chat_manager(approval_request.project_id, project_path)
+    if not chat_manager:
+        raise HTTPException(status_code=400, detail="AI provider not configured or API key missing")
+    
+    async def approval_stream_generator():
+        try:
+            async for step in chat_manager.handle_tool_approval(
+                approved_tools=approval_request.approved_tools,
+                denied_tools=approval_request.denied_tools
+            ):
+                # Send step as JSON line
+                step_data = {
+                    "type": "conversation_step",
+                    "state": step.state.value,
+                    "content": step.content,
+                    "tool_calls": step.tool_calls,
+                    "tool_results": step.tool_results,
+                    "error": step.error,
+                    "timestamp": datetime.now().isoformat()
+                }
+                yield f"data: {json.dumps(step_data)}\n\n"
+                
+        except Exception as e:
+            error_data = {
+                "type": "error",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat()
+            }
+            yield f"data: {json.dumps(error_data)}\n\n"
+    
+    return StreamingResponse(
+        approval_stream_generator(),
+        media_type="text/plain",
+        headers={"Cache-Control": "no-cache"}
     )

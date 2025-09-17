@@ -1,5 +1,6 @@
 import axios from 'axios';
 import type { Project, ProjectCreate, ProjectUpdate, ChatMessage, ChatResponse, GlobalSettings, ProjectSettings } from './types';
+import type { ConversationStep, ToolApprovalRequest } from './tool-types';
 
 interface ChatHistoryMessage {
   id: number;
