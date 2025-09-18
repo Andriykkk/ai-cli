@@ -57,7 +57,7 @@ DEFAULT_PROJECT_SETTINGS = {
         "default_provider": {
             "type": "selector",
             "value": "openai",
-            "options": ["openai", "anthropic", "gemini", "deepseek", "huggingface", "custom_gpu", "ollama"]
+            "options": ["openai", "anthropic", "gemini", "deepseek", "huggingface", "custom_gpu", "ollama", "echo_test"]
         },
         "providers": {
             "openai": {
@@ -91,6 +91,10 @@ DEFAULT_PROJECT_SETTINGS = {
             "ollama": {
                 "base_url": {"type": "text", "value": "http://localhost:11434"},
                 "model": {"type": "text", "value": "llama2"}
+            },
+            "echo_test": {
+                "api_key": {"type": "text", "value": "test-key", "masked": False},
+                "model": {"type": "text", "value": "echo-test"}
             }
         }
     },
@@ -121,9 +125,8 @@ DEFAULT_PROJECT_SETTINGS = {
             "fetch_url": {"type": "boolean", "value": True}
         }
     },
-    "chat_memory": {
-        "enabled": {"type": "boolean", "value": True},
-        "max_history_size": {"type": "number", "value": 1000, "min": 10, "max": 10000}
+    "chat_management": {
+        "clear_history": {"type": "action", "label": "Clear Chat History", "description": "Delete all conversation history for this project", "destructive": True}
     },
     "project_config": {
         "tool_confirmation": {

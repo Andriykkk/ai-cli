@@ -157,7 +157,19 @@ class ChatManager:
         """
         
         # Get the last assistant message with tool calls
+        print(f"DEBUG: handle_tool_approval called with {len(approved_tools)} approved, {len(denied_tools)} denied")
+        print(f"DEBUG: Messages in conversation: {len(self.messages)}")
+        
+        if not self.messages:
+            yield ConversationStep(
+                state=ConversationState.COMPLETED,
+                error="No messages in conversation history"
+            )
+            return
+            
         last_message = self.messages[-1]
+        print(f"DEBUG: Last message role: {last_message.role}, has tool_calls: {bool(last_message.tool_calls)}")
+        
         if not last_message.tool_calls:
             yield ConversationStep(
                 state=ConversationState.COMPLETED,

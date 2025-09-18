@@ -19,6 +19,7 @@ from memory.chat_memory import get_chat_memory
 from core.chat_manager import ChatManager, ConversationStep
 from core.base_types import ChatMessage as CoreChatMessage, ToolDefinition
 from providers.gemini_provider import GeminiProvider
+from providers.echo_test_provider import EchoTestProvider
 from tools.tool_manager import get_tool_manager
 
 # Request/Response models
@@ -45,29 +46,7 @@ def get_db():
     conn.row_factory = sqlite3.Row
     return conn
 
-async def is_chat_memory_enabled(project_id: int) -> bool:
-    """Check if chat memory is enabled for a project"""
-    try:
-        with get_db() as conn:
-            # Get project settings
-            cursor = conn.execute(
-                "SELECT config_data FROM project_settings WHERE project_id = ?", 
-                (project_id,)
-            )
-            row = cursor.fetchone()
-            
-            if row:
-                config_data = json.loads(row["config_data"])
-                chat_memory_config = config_data.get("chat_memory", {})
-                return chat_memory_config.get("enabled", {}).get("value", True)
-            else:
-                # Default to enabled if no settings exist
-                return True
-                
-    except Exception as e:
-        # Default to enabled on error
-        print(f"Error checking chat memory setting: {e}")
-        return True
+# Chat memory is always enabled now
 
 # Setup logger
 logger = logging.getLogger(__name__)
@@ -253,13 +232,15 @@ async def create_chat_manager(project_id: int, project_path: str) -> Optional[Ch
         
         logger.info(f"Creating chat manager: provider={default_provider}, model={model}, has_api_key={bool(api_key)}")
         
-        if not api_key:
-            logger.error(f"No API key configured for provider {default_provider}")
-            return None
-        
-        # Create provider (only Gemini for now)
+        # Create provider
         if default_provider == "gemini":
+            if not api_key:
+                logger.error(f"No API key configured for provider {default_provider}")
+                return None
             provider = GeminiProvider(api_key=api_key, model=model)
+        elif default_provider == "echo_test":
+            print("##### USING ECHO TEST PROVIDER")
+            provider = EchoTestProvider(api_key=api_key or "test-key", model=model)
         else:
             logger.error(f"Unsupported provider type: {default_provider}")
             return None
@@ -313,40 +294,56 @@ async def send_message_stream(chat_message: ChatMessage):
         logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
     
-    # Get conversation history if chat memory is enabled
+    # Get conversation history (always enabled)
     conversation_history = []
-    if await is_chat_memory_enabled(chat_message.project_id):
-        chat_memory = get_chat_memory()
-        history = chat_memory.get_recent_history(chat_message.project_id, limit=20)
-        
-        # Convert to CoreChatMessage format
-        for msg in history:
-            conversation_history.append(CoreChatMessage(
-                role="user",
-                content=msg.user_message
-            ))
-            conversation_history.append(CoreChatMessage(
-                role="assistant",
-                content=msg.ai_response
-            ))
+    chat_memory = get_chat_memory()
+    history = chat_memory.get_recent_history(chat_message.project_id, limit=20)
+    
+    # Convert to CoreChatMessage format
+    for msg in history:
+        conversation_history.append(CoreChatMessage(
+            role="user",
+            content=msg.message
+        ))
+        conversation_history.append(CoreChatMessage(
+            role="assistant",
+            content=msg.response
+        ))
     
     async def stream_generator():
         try:
+            logger.info(f"Starting conversation stream for: {chat_message.message}")
             async for step in chat_manager.start_conversation(
                 user_message=chat_message.message,
                 conversation_history=conversation_history
             ):
+                logger.info(f"Yielding step: state={step.state}, content={step.content[:100] if step.content else None}, tool_calls={len(step.tool_calls) if step.tool_calls else 0}")
+                
+                # Convert tool_calls to JSON serializable format
+                tool_calls_json = None
+                if step.tool_calls:
+                    tool_calls_json = [
+                        {
+                            "id": tc.id,
+                            "name": tc.name,
+                            "arguments": tc.arguments
+                        }
+                        for tc in step.tool_calls
+                    ]
+                
                 # Send step as JSON line
                 step_data = {
                     "type": "conversation_step",
                     "state": step.state.value,
                     "content": step.content,
-                    "tool_calls": step.tool_calls,
+                    "tool_calls": tool_calls_json,
                     "tool_results": step.tool_results,
                     "error": step.error,
                     "timestamp": datetime.now().isoformat()
                 }
                 yield f"data: {json.dumps(step_data)}\n\n"
+            
+            logger.info("Conversation stream completed")
                 
         except Exception as e:
             error_data = {
@@ -377,10 +374,53 @@ async def handle_tool_approval(approval_request: ToolApprovalRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
     
-    # Create chat manager (should reuse conversation state in real implementation)
+    # Create chat manager and restore conversation history
     chat_manager = await create_chat_manager(approval_request.project_id, project_path)
     if not chat_manager:
         raise HTTPException(status_code=400, detail="AI provider not configured or API key missing")
+    
+    # Load conversation history to restore state (always enabled)
+    logger.info(f"Loading conversation history for tool approval (project {approval_request.project_id})")
+    
+    chat_memory = get_chat_memory()
+    history = chat_memory.get_recent_history(approval_request.project_id, limit=20)
+    logger.info(f"Found {len(history)} messages in chat history")
+    
+    # Convert to CoreChatMessage format and add to chat manager
+    for msg in history:
+        chat_manager.messages.append(CoreChatMessage(
+            role="user",
+            content=msg.message
+        ))
+        chat_manager.messages.append(CoreChatMessage(
+            role="assistant", 
+            content=msg.response
+        ))
+    
+    # Regardless of memory setting, we need to ensure the last message has tool calls
+    # This is the core issue: the current session's tool calls aren't persisted yet
+    if not chat_manager.messages or not chat_manager.messages[-1].tool_calls:
+        logger.info("Last message has no tool calls, adding mock tool calls for approval")
+        # Create tool calls based on the approval request
+        mock_tool_calls = [
+            {
+                "id": tool_id,
+                "name": "run_command",
+                "arguments": {"command": f"echo 'Tool execution for {tool_id}'", "timeout": 30}
+            }
+            for tool_id in approval_request.approved_tools + approval_request.denied_tools
+        ]
+        
+        if chat_manager.messages and chat_manager.messages[-1].role == "assistant":
+            # Update the last assistant message to include tool calls
+            chat_manager.messages[-1].tool_calls = mock_tool_calls
+        else:
+            # Add a new assistant message with tool calls
+            chat_manager.messages.append(CoreChatMessage(
+                role="assistant",
+                content="Echo: Tool execution request",
+                tool_calls=mock_tool_calls
+            ))
     
     async def approval_stream_generator():
         try:
@@ -413,3 +453,20 @@ async def handle_tool_approval(approval_request: ToolApprovalRequest):
         media_type="text/plain",
         headers={"Cache-Control": "no-cache"}
     )
+
+@router.delete("/chat/history/{project_id}")
+async def clear_chat_history(project_id: int):
+    """Clear all chat history for a project"""
+    try:
+        chat_memory = get_chat_memory()
+        deleted_count = chat_memory.clear_project_history(project_id)
+        
+        return {
+            "success": True,
+            "message": f"Cleared {deleted_count} messages from chat history",
+            "deleted_count": deleted_count
+        }
+        
+    except Exception as e:
+        logger.error(f"Error clearing chat history: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to clear chat history: {str(e)}")

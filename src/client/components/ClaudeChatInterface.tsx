@@ -8,6 +8,8 @@ import { ToolResultDisplay } from './ToolResultDisplay';
 import { ApiService } from '../api';
 import type { Project } from '../types';
 import type { ConversationStep, ToolCall } from '../tool-types';
+import * as fs from 'fs';
+import * as path from 'path';
 
 interface ClaudeChatInterfaceProps {
   project: Project;
@@ -32,6 +34,18 @@ interface ChatMessage {
 
 type ConversationState = 'idle' | 'generating' | 'tool_approval' | 'tool_executing' | 'completed';
 
+// Client logging function
+const logToFile = (message: string, data?: any) => {
+  try {
+    const timestamp = new Date().toISOString();
+    // const logEntry = `[${timestamp}] ${message}${data ? ` - ${JSON.stringify(data, null, 2)}` : ''}\n`;
+    // const logPath = path.join(process.cwd(), 'client_debug.log');
+    // fs.appendFileSync(logPath, logEntry);
+  } catch (e) {
+    // Ignore logging errors
+  }
+};
+
 export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
   project,
   onBack,
@@ -39,6 +53,10 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [currentInput, setCurrentInput] = useState('');
+  const [cursorPosition, setCursorPosition] = useState(0);
+  const [desiredColumn, setDesiredColumn] = useState(0); // For smart line navigation
+  const [commandHistory, setCommandHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
   const [conversationState, setConversationState] = useState<ConversationState>('idle');
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [error, setError] = useState('');
@@ -52,6 +70,19 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
   useEffect(() => {
     loadChatHistory();
   }, [project]);
+
+  // Keep cursor position within bounds
+  useEffect(() => {
+    setCursorPosition(pos => Math.min(pos, currentInput.length));
+  }, [currentInput]);
+
+  useEffect(() => {
+    logToFile('🔄 ConversationState changed', {
+      newState: conversationState,
+      pendingToolCallsCount: pendingToolCalls.length,
+      pendingContentExists: !!pendingContent
+    });
+  }, [conversationState, pendingToolCalls, pendingContent]);
 
   const loadChatHistory = async () => {
     try {
@@ -170,17 +201,69 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
       }
     } else if (key.return) {
       if (currentInput.trim() && conversationState === 'idle') {
-        handleSendMessage(currentInput.trim());
+        // Add to command history
+        const newCommand = currentInput.trim();
+        setCommandHistory(prev => {
+          const filtered = prev.filter(cmd => cmd !== newCommand);
+          return [newCommand, ...filtered].slice(0, 50); // Keep last 50 commands
+        });
+        setHistoryIndex(-1);
+
+        handleSendMessage(newCommand);
         setCurrentInput('');
+        setCursorPosition(0);
       }
     } else if (conversationState === 'idle') {
       // Only allow input modification when idle
-      if (key.backspace || key.delete) {
-        setCurrentInput((prev) => prev.slice(0, -1));
+      if (key.backspace) {
+        if (cursorPosition > 0) {
+          setCurrentInput((prev) =>
+            prev.slice(0, cursorPosition - 1) + prev.slice(cursorPosition)
+          );
+          setCursorPosition(pos => pos - 1);
+        }
+      } else if (key.delete) {
+        setCurrentInput((prev) =>
+          prev.slice(0, cursorPosition) + prev.slice(cursorPosition + 1)
+        );
+      } else if (key.leftArrow) {
+        setCursorPosition(pos => Math.max(0, pos - 1));
+      } else if (key.rightArrow) {
+        setCursorPosition(pos => Math.min(currentInput.length, pos + 1));
       } else if (key.upArrow) {
-        setScrollPosition(Math.max(0, scrollPosition - 1));
+        // Navigate command history up (if at start of line) or scroll messages
+        if (cursorPosition === 0 && currentInput.length === 0) {
+          if (historyIndex < commandHistory.length - 1) {
+            const newIndex = historyIndex + 1;
+            setHistoryIndex(newIndex);
+            const historicalCommand = commandHistory[newIndex];
+            setCurrentInput(historicalCommand);
+            setCursorPosition(historicalCommand.length);
+          }
+        } else {
+          setScrollPosition(Math.max(0, scrollPosition - 1));
+        }
       } else if (key.downArrow) {
-        setScrollPosition(scrollPosition + 1);
+        // Navigate command history down (if at start of line) or scroll messages
+        if (cursorPosition === 0 && currentInput.length === 0) {
+          if (historyIndex > 0) {
+            const newIndex = historyIndex - 1;
+            setHistoryIndex(newIndex);
+            const historicalCommand = commandHistory[newIndex];
+            setCurrentInput(historicalCommand);
+            setCursorPosition(historicalCommand.length);
+          } else if (historyIndex === 0) {
+            setHistoryIndex(-1);
+            setCurrentInput('');
+            setCursorPosition(0);
+          }
+        } else {
+          setScrollPosition(scrollPosition + 1);
+        }
+      } else if (key.home) {
+        setCursorPosition(0);
+      } else if (key.end) {
+        setCursorPosition(currentInput.length);
       } else if ((input === 's' || input === 'S') && key.ctrl) {
         // Ctrl+S opens settings
         onOpenSettings();
@@ -188,12 +271,22 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
         // Ctrl+R toggles tool results visibility
         setToolResultsVisible(prev => !prev);
       } else if (input && !key.ctrl && !key.meta) {
-        setCurrentInput((prev) => prev + input);
+        // Insert character at cursor position
+        setCurrentInput((prev) =>
+          prev.slice(0, cursorPosition) + input + prev.slice(cursorPosition)
+        );
+        setCursorPosition(pos => pos + 1);
+        // Reset history navigation when typing
+        if (historyIndex !== -1) {
+          setHistoryIndex(-1);
+        }
       }
     }
   });
 
   const handleSendMessage = async (message: string) => {
+    logToFile('🚀 Starting to send message', { message, projectId: project.id });
+
     const userMessage: ChatMessage = {
       id: Date.now().toString(),
       type: 'user',
@@ -210,13 +303,17 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
     setAbortController(controller);
 
     try {
+      logToFile('📡 Calling ApiService.sendMessageStream');
       const stream = await ApiService.sendMessageStream({
         message,
         project_id: project.id,
       }, controller.signal);
 
+      logToFile('📡 Stream received, starting to process');
       setCurrentStream(stream);
       await processConversationStream(stream);
+
+      // Note: Don't set final state here, let the conversation steps handle it
 
     } catch (err) {
       // Don't show error if request was aborted
@@ -228,6 +325,7 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
           timestamp: new Date().toISOString()
         };
         setMessages((prev) => [...prev, cancelMessage]);
+        setConversationState('idle');
       } else {
         setError(err instanceof Error ? err.message : 'Failed to send message');
 
@@ -245,23 +343,32 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
         };
 
         setMessages((prev) => [...prev, errorMessage]);
+        setConversationState('idle');
       }
     } finally {
-      setConversationState('idle');
+      // Only clean up resources, don't change conversation state
+      // The conversation state should be determined by the last received step
+      logToFile('🧹 Cleanup: cleaning up resources only');
       setAbortController(null);
       setCurrentStream(null);
     }
   };
 
   const processConversationStream = async (stream: ReadableStream<ConversationStep>) => {
+    logToFile('📡 Starting to process conversation stream');
     const reader = stream.getReader();
-    
+
     try {
       while (true) {
         const { done, value } = await reader.read();
-        
-        if (done) break;
-        
+
+        logToFile('📦 Stream chunk received', { done, value });
+
+        if (done) {
+          logToFile('✅ Stream completed');
+          break;
+        }
+
         await handleConversationStep(value);
       }
     } finally {
@@ -270,21 +377,33 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
   };
 
   const handleConversationStep = async (step: ConversationStep) => {
+    logToFile('🔄 Received conversation step', step);
+
     switch (step.state) {
       case 'generating':
+        logToFile('⚡ Setting state to generating');
         setConversationState('generating');
         break;
-        
+
       case 'tool_approval':
+        logToFile('🛠️ Setting state to tool_approval', {
+          toolCount: step.tool_calls?.length,
+          content: step.content?.substring(0, 100)
+        });
         setConversationState('tool_approval');
         setPendingContent(step.content || '');
         setPendingToolCalls(step.tool_calls || []);
+        logToFile('🛠️ State and pending data set', {
+          newState: 'tool_approval',
+          pendingContent: step.content || '',
+          pendingToolCallsCount: (step.tool_calls || []).length
+        });
         break;
-        
+
       case 'tool_executing':
         setConversationState('tool_executing');
         break;
-        
+
       case 'completed':
         if (step.error) {
           setError(step.error);
@@ -312,7 +431,7 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
           };
           setMessages((prev) => [...prev, assistantMessage]);
         }
-        
+
         setConversationState('idle');
         setPendingToolCalls([]);
         setPendingContent('');
@@ -321,18 +440,23 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
   };
 
   const handleToolApproval = async (approvedTools: string[], deniedTools: string[]) => {
+    logToFile('🛠️ Tool approval submitted', { approvedTools, deniedTools });
     setConversationState('tool_executing');
-    
+
     try {
+      logToFile('📡 Calling ApiService.sendToolApproval');
       const stream = await ApiService.sendToolApproval({
         project_id: project.id,
         approved_tools: approvedTools,
         denied_tools: deniedTools
       });
 
+      logToFile('📡 Tool approval stream received, processing');
       await processConversationStream(stream);
-      
+      logToFile('✅ Tool approval stream completed');
+
     } catch (err) {
+      logToFile('❌ Tool approval error', { error: err });
       setError(err instanceof Error ? err.message : 'Failed to process tool approval');
       setConversationState('idle');
     }
@@ -342,7 +466,7 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
     setConversationState('idle');
     setPendingToolCalls([]);
     setPendingContent('');
-    
+
     if (abortController) {
       abortController.abort();
       setAbortController(null);
@@ -469,9 +593,9 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
 
                 {/* Tool Results Display */}
                 {msg.toolResults && msg.toolResults.length > 0 && (
-                  <ToolResultDisplay 
-                    toolResults={msg.toolResults} 
-                    isVisible={toolResultsVisible} 
+                  <ToolResultDisplay
+                    toolResults={msg.toolResults}
+                    isVisible={toolResultsVisible}
                   />
                 )}
               </Box>
@@ -494,14 +618,23 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
       </Box>
 
       {/* Tool Approval Component */}
-      {conversationState === 'tool_approval' && (
-        <ToolApprovalComponent
-          content={pendingContent}
-          toolCalls={pendingToolCalls}
-          onApproval={handleToolApproval}
-          onCancel={handleToolApprovalCancel}
-        />
-      )}
+      {(() => {
+        const shouldShow = conversationState === 'tool_approval';
+        logToFile('🎨 Render check for ToolApprovalComponent', {
+          conversationState,
+          shouldShow,
+          pendingToolCallsCount: pendingToolCalls.length,
+          pendingContent: pendingContent?.substring(0, 50)
+        });
+        return shouldShow ? (
+          <ToolApprovalComponent
+            content={pendingContent}
+            toolCalls={pendingToolCalls}
+            onApproval={handleToolApproval}
+            onCancel={handleToolApprovalCancel}
+          />
+        ) : null;
+      })()}
 
       {/* Input Area - Hidden during tool approval */}
       {conversationState !== 'tool_approval' && (
@@ -516,8 +649,15 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
             borderColor={conversationState !== 'idle' ? 'yellow' : undefined}
           >
             <Text>
-              {currentInput}
-              {conversationState === 'idle' && <Text backgroundColor="white" color="black">█</Text>}
+              {conversationState === 'idle' ? (
+                <>
+                  {currentInput.slice(0, cursorPosition)}
+                  <Text backgroundColor="white" color="black">█</Text>
+                  {currentInput.slice(cursorPosition)}
+                </>
+              ) : (
+                currentInput
+              )}
             </Text>
           </Box>
 
@@ -525,7 +665,7 @@ export const ClaudeChatInterface: React.FC<ClaudeChatInterfaceProps> = ({
             <Text dimColor>
               {conversationState === 'generating' && 'Press Esc to cancel • AI is generating response...'}
               {conversationState === 'tool_executing' && 'Press Esc to cancel • Executing approved tools...'}
-              {conversationState === 'idle' && 'Type your message and press Enter • ↑↓ Scroll • Ctrl+S Settings • Ctrl+R Toggle tool results • Esc Back to projects'}
+              {conversationState === 'idle' && 'Type your message and press Enter • ←→ Move cursor • ↑↓ History/Scroll • Home/End • Ctrl+S Settings • Ctrl+R Toggle tool results • Esc Back to projects'}
             </Text>
           </Box>
         </Box>
