@@ -1,0 +1,282 @@
+import React, { useState, useRef, useEffect } from 'react';
+import { useApp } from '../context/AppContext';
+import { Message } from '../types';
+
+export function ChatInterface() {
+  const { state, dispatch, api } = useApp();
+  const [input, setInput] = useState('');
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  const isVisible = state.currentScreen === 'chat';
+
+  useEffect(() => {
+    if (isVisible && state.currentProject) {
+      loadChatHistory();
+    }
+  }, [isVisible, state.currentProject]);
+
+  // Auto-scroll to bottom when messages change or when entering chat
+  useEffect(() => {
+    if (messagesRef.current && isVisible) {
+      messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
+    }
+  }, [state.messages, isVisible]);
+
+  const loadChatHistory = async () => {
+    if (!state.currentProject) return;
+
+    try {
+      dispatch({ type: 'SET_LOADING', payload: { loading: true, message: 'Loading chat history...' } });
+      const { messages } = await api.getChatHistory(state.currentProject.id);
+      
+      // Convert server format to client format
+      const convertedMessages: Message[] = [];
+      messages.forEach((histMsg: any) => {
+        convertedMessages.push({
+          id: `${histMsg.id}-user`,
+          role: 'user',
+          content: histMsg.message,
+          timestamp: new Date(histMsg.timestamp),
+        });
+        convertedMessages.push({
+          id: `${histMsg.id}-assistant`,
+          role: 'assistant', 
+          content: histMsg.response,
+          timestamp: new Date(histMsg.timestamp),
+        });
+      });
+      
+      dispatch({ type: 'SET_MESSAGES', payload: convertedMessages });
+    } catch (error) {
+      dispatch({ type: 'SET_ERROR', payload: 'Failed to load chat history: ' + (error as Error).message });
+      // Show welcome message if history fails
+      const welcomeMessage: Message = {
+        id: 'welcome',
+        role: 'assistant',
+        content: `Welcome to ${state.currentProject?.name}!\n\nI'm ready to help with your project.`,
+        timestamp: new Date(),
+      };
+      dispatch({ type: 'SET_MESSAGES', payload: [welcomeMessage] });
+    } finally {
+      dispatch({ type: 'SET_LOADING', payload: { loading: false } });
+    }
+  };
+
+
+  const handleSendMessage = async () => {
+    if (!input.trim() || !state.currentProject) return;
+
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: input.trim(),
+      timestamp: new Date(),
+    };
+
+    // Show user message immediately
+    dispatch({ type: 'ADD_MESSAGE', payload: userMessage });
+    dispatch({ type: 'SET_CONVERSATION_STATE', payload: 'generating' });
+
+    // Add to command history
+    const newHistory = [input.trim(), ...state.commandHistory.slice(0, 49)];
+    dispatch({ type: 'SET_COMMAND_HISTORY', payload: newHistory });
+    dispatch({ type: 'SET_HISTORY_INDEX', payload: -1 });
+
+    const messageContent = input.trim();
+    setInput('');
+
+    try {
+      abortControllerRef.current = new AbortController();
+      const stream = await api.sendMessage({
+        message: messageContent,
+        project_id: state.currentProject.id,
+      }, abortControllerRef.current.signal);
+
+      let assistantMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: '',
+        timestamp: new Date(),
+      };
+
+      let assistantMessageAdded = false;
+
+      await api.parseStreamingResponse(
+        stream,
+        (data) => {
+          // Handle streaming data based on conversation state
+          // Capture session_id when provided
+          if (data.session_id) {
+            console.log('Updating session_id:', data.session_id);
+            dispatch({ type: 'SET_SESSION_ID', payload: data.session_id });
+          }
+          
+          switch (data.state) {
+            case 'generating':
+              dispatch({ type: 'SET_CONVERSATION_STATE', payload: 'generating' });
+              break;
+
+            case 'tool_approval':
+              // First, show the response content
+              if (data.content) {
+                assistantMessage.content = data.content;
+                assistantMessage.tool_calls = data.tool_calls;
+                if (assistantMessageAdded) {
+                  dispatch({ type: 'SET_MESSAGES', payload: [...state.messages.slice(0, -1), assistantMessage] });
+                } else {
+                  dispatch({ type: 'ADD_MESSAGE', payload: assistantMessage });
+                  assistantMessageAdded = true;
+                }
+              }
+              dispatch({ type: 'SET_CONVERSATION_STATE', payload: 'tool_approval' });
+              // Show tool approval UI instead of auto-approving
+              dispatch({ type: 'SET_PENDING_TOOL_CALLS', payload: { content: data.content || '', toolCalls: data.tool_calls || [], sessionId: data.session_id || '' } });
+              break;
+
+            case 'tool_executing':
+              dispatch({ type: 'SET_CONVERSATION_STATE', payload: 'tool_executing' });
+              break;
+
+            case 'completed':
+              if (data.error) {
+                const errorMessage: Message = {
+                  id: (Date.now() + 2).toString(),
+                  role: 'assistant',
+                  content: `Error: ${data.error}`,
+                  timestamp: new Date(),
+                };
+                dispatch({ type: 'ADD_MESSAGE', payload: errorMessage });
+              } else if (data.content) {
+                if (assistantMessageAdded) {
+                  // Update existing message
+                  assistantMessage.content = data.content;
+                  dispatch({ type: 'SET_MESSAGES', payload: [...state.messages.slice(0, -1), assistantMessage] });
+                } else {
+                  // Add new message
+                  const finalMessage: Message = {
+                    id: (Date.now() + 2).toString(),
+                    role: 'assistant',
+                    content: data.content,
+                    timestamp: new Date(),
+                  };
+                  dispatch({ type: 'ADD_MESSAGE', payload: finalMessage });
+                }
+              }
+              dispatch({ type: 'SET_CONVERSATION_STATE', payload: 'idle' });
+              dispatch({ type: 'SET_SESSION_ID', payload: null }); // Clear session when complete
+              break;
+          }
+
+          // Handle incremental content updates during generation
+          if (data.content && data.state !== 'tool_approval' && data.state !== 'completed') {
+            assistantMessage.content += data.content;
+            if (assistantMessageAdded) {
+              dispatch({ type: 'SET_MESSAGES', payload: [...state.messages.slice(0, -1), assistantMessage] });
+            } else {
+              dispatch({ type: 'ADD_MESSAGE', payload: assistantMessage });
+              assistantMessageAdded = true;
+            }
+          }
+        },
+        (error) => {
+          dispatch({ type: 'SET_ERROR', payload: 'Failed to send message: ' + error.message });
+          dispatch({ type: 'SET_CONVERSATION_STATE', payload: 'idle' });
+        },
+        () => {
+          dispatch({ type: 'SET_CONVERSATION_STATE', payload: 'idle' });
+        }
+      );
+    } catch (error) {
+      dispatch({ type: 'SET_ERROR', payload: 'Failed to send message: ' + (error as Error).message });
+      dispatch({ type: 'SET_CONVERSATION_STATE', payload: 'idle' });
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    } else if (e.key === 'ArrowUp') {
+      // Navigate history up
+      if (state.historyIndex < state.commandHistory.length - 1) {
+        const newIndex = state.historyIndex + 1;
+        dispatch({ type: 'SET_HISTORY_INDEX', payload: newIndex });
+        setInput(state.commandHistory[newIndex]);
+      }
+    } else if (e.key === 'ArrowDown') {
+      // Navigate history down
+      if (state.historyIndex > 0) {
+        const newIndex = state.historyIndex - 1;
+        dispatch({ type: 'SET_HISTORY_INDEX', payload: newIndex });
+        setInput(state.commandHistory[newIndex]);
+      } else if (state.historyIndex === 0) {
+        dispatch({ type: 'SET_HISTORY_INDEX', payload: -1 });
+        setInput('');
+      }
+    }
+  };
+
+  if (!isVisible) {
+    return null;
+  }
+
+  return (
+    <div className="screen" id="chat-interface">
+      <div className="chat-container">
+        <div className="messages" ref={messagesRef}>
+          {state.messages.length === 0 ? (
+            <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+              <p>Welcome to your AI assistant!</p>
+              <p>Type a message below to start chatting.</p>
+            </div>
+          ) : (
+            state.messages.map(message => (
+              <div key={message.id} className={`message ${message.role}`}>
+                <div className="message-content">{message.content}</div>
+                {message.thinking && (
+                  <div className="message-thinking">
+                    <details>
+                      <summary>Thinking...</summary>
+                      <pre>{message.thinking}</pre>
+                    </details>
+                  </div>
+                )}
+                {message.tool_calls && (
+                  <div className="tool-calls">
+                    <h4>Tool Calls:</h4>
+                    {message.tool_calls.map(tool => (
+                      <div key={tool.id} className="tool-call">
+                        <strong>{tool.name}</strong>
+                        <pre>{JSON.stringify(tool.arguments, null, 2)}</pre>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="input-container">
+          <div className="input-wrapper">
+            <div className="input-prompt"></div>
+            <textarea
+              className="input-field"
+              ref={inputRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Type your message..."
+              rows={1}
+            />
+          </div>
+          <div className="input-status">
+            Type your message and press Enter • ↑↓ History • Ctrl+L Clear • Esc Back
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

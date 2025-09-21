@@ -313,3 +313,20 @@ async def reset_project_settings(project_id: int):
         
         conn.commit()
         return {"message": "Project settings reset to defaults"}
+
+
+@router.post("/projects/{project_id}/actions/clear_history")
+async def clear_project_chat_history(project_id: int):
+    """Clear all chat history for a project"""
+    with get_db() as conn:
+        # Check if project exists
+        cursor = conn.execute("SELECT id FROM projects WHERE id = ?", (project_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        # Delete all chat history for this project
+        cursor = conn.execute("DELETE FROM chat_history WHERE project_id = ?", (project_id,))
+        deleted_count = cursor.rowcount
+        
+        conn.commit()
+        return {"message": f"Cleared {deleted_count} messages from chat history", "deleted_count": deleted_count}

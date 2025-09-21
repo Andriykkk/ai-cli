@@ -1,0 +1,276 @@
+import React, { useState, useEffect } from 'react';
+import { useApp } from '../context/AppContext';
+import { ToolCall } from '../types';
+
+export function ToolApproval() {
+  const { state, dispatch, api } = useApp();
+  const [approvals, setApprovals] = useState<Record<string, boolean | null>>({});
+  
+  // Initialize approvals when toolCalls change
+  useEffect(() => {
+    if (state.pendingToolCalls?.toolCalls) {
+      setApprovals(Object.fromEntries(state.pendingToolCalls.toolCalls.map(tc => [tc.id, null])));
+    }
+  }, [state.pendingToolCalls?.toolCalls]);
+  
+  if (!state.pendingToolCalls) {
+    return null;
+  }
+
+  const { content, toolCalls } = state.pendingToolCalls;
+
+  const handleToggleApproval = (toolId: string) => {
+    const currentApproval = approvals[toolId];
+    const newApproval = currentApproval === true ? false : (currentApproval === false ? null : true);
+    setApprovals(prev => ({ ...prev, [toolId]: newApproval }));
+  };
+
+  const handleApproveAll = () => {
+    const newApprovals = Object.fromEntries(toolCalls.map(tc => [tc.id, true]));
+    setApprovals(newApprovals);
+  };
+
+  const handleDenyAll = () => {
+    const newApprovals = Object.fromEntries(toolCalls.map(tc => [tc.id, false]));
+    setApprovals(newApprovals);
+  };
+
+  const handleClearAll = () => {
+    const newApprovals = Object.fromEntries(toolCalls.map(tc => [tc.id, null]));
+    setApprovals(newApprovals);
+  };
+
+  const handleExecute = async () => {
+    if (!state.currentProject || !state.pendingToolCalls?.sessionId) return;
+    
+    const approved = Object.entries(approvals)
+      .filter(([_, status]) => status === true)
+      .map(([id, _]) => id);
+    const denied = Object.entries(approvals)
+      .filter(([_, status]) => status === false)
+      .map(([id, _]) => id);
+    
+    if (approved.length > 0 || denied.length > 0) {
+      // Extract session_id before clearing pending tool calls
+      const sessionId = state.pendingToolCalls.sessionId;
+      
+      // Clear the pending tool calls
+      dispatch({ type: 'SET_PENDING_TOOL_CALLS', payload: null });
+      dispatch({ type: 'SET_CONVERSATION_STATE', payload: 'tool_executing' });
+      
+      try {
+        console.log('Tool approval using session_id:', sessionId);
+        const stream = await api.approveTools({
+          approved_tools: approved,
+          denied_tools: denied,
+          project_id: state.currentProject.id,
+          session_id: sessionId,
+        });
+
+        await api.parseStreamingResponse(
+          stream,
+          (data) => {
+            // Handle tool execution results similar to main conversation
+            // Update session_id if provided
+            if (data.session_id && data.session_id !== state.sessionId) {
+              dispatch({ type: 'SET_SESSION_ID', payload: data.session_id });
+            }
+            
+            switch (data.state) {
+              case 'tool_executing':
+                dispatch({ type: 'SET_CONVERSATION_STATE', payload: 'tool_executing' });
+                break;
+
+              case 'generating':
+                dispatch({ type: 'SET_CONVERSATION_STATE', payload: 'generating' });
+                // Handle incremental content during generation after tool execution
+                if (data.content) {
+                  const messages = [...state.messages];
+                  const lastAssistantIndex = messages.map(m => m.role).lastIndexOf('assistant');
+                  if (lastAssistantIndex !== -1) {
+                    // Append streaming content to existing message
+                    messages[lastAssistantIndex] = {
+                      ...messages[lastAssistantIndex],
+                      content: messages[lastAssistantIndex].content + data.content,
+                    };
+                    dispatch({ type: 'SET_MESSAGES', payload: messages });
+                  }
+                }
+                break;
+
+              case 'tool_approval':
+                // More tools requested - update the last assistant message
+                if (data.content) {
+                  // Find and update the last assistant message
+                  const messages = [...state.messages];
+                  const lastAssistantIndex = messages.map(m => m.role).lastIndexOf('assistant');
+                  if (lastAssistantIndex !== -1) {
+                    // Append new content to existing message
+                    messages[lastAssistantIndex] = {
+                      ...messages[lastAssistantIndex],
+                      content: messages[lastAssistantIndex].content + '\n\n' + data.content,
+                      tool_calls: data.tool_calls,
+                    };
+                    dispatch({ type: 'SET_MESSAGES', payload: messages });
+                  }
+                }
+                dispatch({ type: 'SET_PENDING_TOOL_CALLS', payload: { content: data.content || '', toolCalls: data.tool_calls || [], sessionId: data.session_id || '' } });
+                break;
+
+              case 'completed':
+                if (data.content) {
+                  // Find and update the last assistant message with final content
+                  const messages = [...state.messages];
+                  const lastAssistantIndex = messages.map(m => m.role).lastIndexOf('assistant');
+                  if (lastAssistantIndex !== -1) {
+                    // Append final content to existing message
+                    messages[lastAssistantIndex] = {
+                      ...messages[lastAssistantIndex],
+                      content: messages[lastAssistantIndex].content + '\n\n' + data.content,
+                      tool_calls: undefined, // Clear tool calls when completed
+                    };
+                    dispatch({ type: 'SET_MESSAGES', payload: messages });
+                  }
+                }
+                dispatch({ type: 'SET_CONVERSATION_STATE', payload: 'idle' });
+                dispatch({ type: 'SET_SESSION_ID', payload: null }); // Clear session when complete
+                break;
+            }
+          },
+          (error) => {
+            dispatch({ type: 'SET_ERROR', payload: 'Tool approval failed: ' + error.message });
+            dispatch({ type: 'SET_CONVERSATION_STATE', payload: 'idle' });
+          },
+          () => {
+            dispatch({ type: 'SET_CONVERSATION_STATE', payload: 'idle' });
+          }
+        );
+      } catch (error) {
+        dispatch({ type: 'SET_ERROR', payload: 'Tool approval failed: ' + (error as Error).message });
+        dispatch({ type: 'SET_CONVERSATION_STATE', payload: 'idle' });
+      }
+    }
+  };
+
+  const handleCancel = () => {
+    dispatch({ type: 'SET_PENDING_TOOL_CALLS', payload: null });
+    dispatch({ type: 'SET_CONVERSATION_STATE', payload: 'idle' });
+  };
+
+  const getStatusIcon = (status: boolean | null): string => {
+    if (status === true) return '✅';
+    if (status === false) return '❌';
+    return '⏳';
+  };
+
+  const getStatusText = (status: boolean | null): string => {
+    if (status === true) return 'Approved';
+    if (status === false) return 'Denied';
+    return 'Pending';
+  };
+
+  const hasDecisions = Object.values(approvals).some(status => status !== null);
+  const approvedCount = Object.values(approvals).filter(s => s === true).length;
+  const deniedCount = Object.values(approvals).filter(s => s === false).length;
+
+  return (
+    <div className="tool-approval-overlay">
+      <div className="tool-approval-modal">
+        {/* AI Response Content */}
+        {content && (
+          <div className="tool-approval-content">
+            <div className="tool-approval-header">
+              <h3>🤖 AI Assistant Response</h3>
+            </div>
+            <div className="tool-approval-response">
+              <pre>{content}</pre>
+            </div>
+          </div>
+        )}
+
+        {/* Tool Approval Section */}
+        <div className="tool-approval-section">
+          <div className="tool-approval-header">
+            <h3>⚠️ Tool Approval Required</h3>
+            <p>The AI wants to execute the following tools. Review and approve/deny each one:</p>
+          </div>
+
+          {/* Tool List */}
+          <div className="tool-approval-list">
+            {toolCalls.map((tool) => {
+              const approval = approvals[tool.id];
+              
+              return (
+                <div key={tool.id} className="tool-approval-item">
+                  <div className="tool-approval-item-header">
+                    <div className="tool-approval-status">
+                      <span className="tool-status-icon">{getStatusIcon(approval)}</span>
+                      <span className={`tool-status-text ${approval === true ? 'approved' : approval === false ? 'denied' : 'pending'}`}>
+                        {getStatusText(approval)}
+                      </span>
+                    </div>
+                    <button 
+                      className="tool-name-button"
+                      onClick={() => handleToggleApproval(tool.id)}
+                    >
+                      {tool.name}
+                    </button>
+                  </div>
+                  
+                  <div className="tool-approval-details">
+                    {tool.name === 'run_command' ? (
+                      <div>
+                        <strong>Command:</strong>
+                        <code className="tool-command">{tool.arguments.command}</code>
+                        {tool.arguments.timeout && (
+                          <div className="tool-timeout">
+                            <strong>Timeout:</strong> {tool.arguments.timeout}s
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div>
+                        <strong>Arguments:</strong>
+                        <pre className="tool-arguments">
+                          {JSON.stringify(tool.arguments, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Controls */}
+          <div className="tool-approval-controls">
+            <div className="tool-approval-buttons">
+              <button className="btn btn-success" onClick={handleApproveAll}>
+                Approve All
+              </button>
+              <button className="btn btn-danger" onClick={handleDenyAll}>
+                Deny All
+              </button>
+              <button className="btn" onClick={handleClearAll}>
+                Clear All
+              </button>
+            </div>
+            
+            <div className="tool-approval-actions">
+              <button 
+                className="btn btn-primary" 
+                onClick={handleExecute}
+                disabled={!hasDecisions}
+              >
+                Execute {hasDecisions ? `(${approvedCount} approved, ${deniedCount} denied)` : ''}
+              </button>
+              <button className="btn" onClick={handleCancel}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -18,6 +18,7 @@ from pathlib import Path
 from memory.chat_memory import get_chat_memory
 from core.chat_manager import ChatManager, ConversationStep
 from core.base_types import ChatMessage as CoreChatMessage, ToolDefinition
+from core.session_manager import get_session_manager
 from providers.gemini_provider import GeminiProvider
 from providers.echo_test_provider import EchoTestProvider
 from tools.tool_manager import get_tool_manager
@@ -33,6 +34,7 @@ class ChatResponse(BaseModel):
 
 class ToolApprovalRequest(BaseModel):
     project_id: int
+    session_id: str
     approved_tools: List[str]
     denied_tools: List[str]
 
@@ -286,6 +288,10 @@ async def send_message_stream(chat_message: ChatMessage):
         if not chat_manager:
             logger.error(f"Failed to create chat manager for project {chat_message.project_id}")
             raise HTTPException(status_code=400, detail="AI provider not configured or API key missing")
+        
+        # Create session for this conversation
+        session_manager = get_session_manager()
+        session_id = session_manager.create_session(chat_message.project_id, project_path, chat_manager)
             
     except HTTPException:
         raise
@@ -339,9 +345,15 @@ async def send_message_stream(chat_message: ChatMessage):
                     "tool_calls": tool_calls_json,
                     "tool_results": step.tool_results,
                     "error": step.error,
+                    "session_id": session_id,
                     "timestamp": datetime.now().isoformat()
                 }
                 yield f"data: {json.dumps(step_data)}\n\n"
+                
+                # Clean up session when conversation is complete (no tool calls)
+                if step.state.value == "completed":
+                    session_manager.cleanup_session(session_id)
+                    logger.info(f"Cleaned up completed session {session_id}")
             
             logger.info("Conversation stream completed")
                 
@@ -361,84 +373,59 @@ async def send_message_stream(chat_message: ChatMessage):
 
 @router.post("/chat/tool-approval")
 async def handle_tool_approval(approval_request: ToolApprovalRequest):
-    """Handle user's tool approval decision"""
+    """Handle user's tool approval decision using session state"""
     
-    # Get project path from database
-    try:
-        with get_db() as conn:
-            cursor = conn.execute("SELECT path FROM projects WHERE id = ?", (approval_request.project_id,))
-            row = cursor.fetchone()
-            if not row:
-                raise HTTPException(status_code=404, detail="Project not found")
-            project_path = row["path"]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    # Get session manager and retrieve active session
+    session_manager = get_session_manager()
+    session = session_manager.get_session(approval_request.session_id)
     
-    # Create chat manager and restore conversation history
-    chat_manager = await create_chat_manager(approval_request.project_id, project_path)
-    if not chat_manager:
-        raise HTTPException(status_code=400, detail="AI provider not configured or API key missing")
+    if not session:
+        logger.error(f"Session {approval_request.session_id} not found or expired")
+        raise HTTPException(status_code=404, detail="Session not found or expired")
     
-    # Load conversation history to restore state (always enabled)
-    logger.info(f"Loading conversation history for tool approval (project {approval_request.project_id})")
+    if session.project_id != approval_request.project_id:
+        logger.error(f"Session project mismatch: {session.project_id} != {approval_request.project_id}")
+        raise HTTPException(status_code=400, detail="Session project mismatch")
     
-    chat_memory = get_chat_memory()
-    history = chat_memory.get_recent_history(approval_request.project_id, limit=20)
-    logger.info(f"Found {len(history)} messages in chat history")
-    
-    # Convert to CoreChatMessage format and add to chat manager
-    for msg in history:
-        chat_manager.messages.append(CoreChatMessage(
-            role="user",
-            content=msg.message
-        ))
-        chat_manager.messages.append(CoreChatMessage(
-            role="assistant", 
-            content=msg.response
-        ))
-    
-    # Regardless of memory setting, we need to ensure the last message has tool calls
-    # This is the core issue: the current session's tool calls aren't persisted yet
-    if not chat_manager.messages or not chat_manager.messages[-1].tool_calls:
-        logger.info("Last message has no tool calls, adding mock tool calls for approval")
-        # Create tool calls based on the approval request
-        mock_tool_calls = [
-            {
-                "id": tool_id,
-                "name": "run_command",
-                "arguments": {"command": f"echo 'Tool execution for {tool_id}'", "timeout": 30}
-            }
-            for tool_id in approval_request.approved_tools + approval_request.denied_tools
-        ]
-        
-        if chat_manager.messages and chat_manager.messages[-1].role == "assistant":
-            # Update the last assistant message to include tool calls
-            chat_manager.messages[-1].tool_calls = mock_tool_calls
-        else:
-            # Add a new assistant message with tool calls
-            chat_manager.messages.append(CoreChatMessage(
-                role="assistant",
-                content="Echo: Tool execution request",
-                tool_calls=mock_tool_calls
-            ))
+    # Use the existing chat manager with preserved state
+    chat_manager = session.chat_manager
+    logger.info(f"Using session {approval_request.session_id} with {len(chat_manager.messages)} messages")
     
     async def approval_stream_generator():
         try:
-            async for step in chat_manager.handle_tool_approval(
+            async for step in chat_manager.continue_conversation_after_tools(
                 approved_tools=approval_request.approved_tools,
                 denied_tools=approval_request.denied_tools
             ):
+                # Convert tool_calls to JSON serializable format (same as original endpoint)
+                tool_calls_json = None
+                if step.tool_calls:
+                    tool_calls_json = [
+                        {
+                            "id": tc.id,
+                            "name": tc.name,
+                            "arguments": tc.arguments
+                        }
+                        for tc in step.tool_calls
+                    ]
+                
                 # Send step as JSON line
                 step_data = {
                     "type": "conversation_step",
                     "state": step.state.value,
                     "content": step.content,
-                    "tool_calls": step.tool_calls,
+                    "tool_calls": tool_calls_json,
                     "tool_results": step.tool_results,
                     "error": step.error,
+                    "session_id": approval_request.session_id,
                     "timestamp": datetime.now().isoformat()
                 }
                 yield f"data: {json.dumps(step_data)}\n\n"
+                
+                # Clean up session when conversation is complete
+                if step.state.value == "completed":
+                    session_manager.cleanup_session(approval_request.session_id)
+                    logger.info(f"Cleaned up completed session {approval_request.session_id}")
                 
         except Exception as e:
             error_data = {

@@ -119,8 +119,8 @@ class ChatManager:
                         content=response.content
                     )
                     
-                    # Save to memory
-                    await self._save_to_memory(user_message, response.content)
+                    # Save to memory using the same method as tool conversations
+                    await self._save_final_conversation()
                     return
                 
                 # AI wants to use tools - ask for user approval
@@ -140,13 +140,13 @@ class ChatManager:
                 )
                 return
     
-    async def handle_tool_approval(
+    async def continue_conversation_after_tools(
         self, 
         approved_tools: List[str],  # List of approved tool call IDs
         denied_tools: List[str]     # List of denied tool call IDs
     ) -> AsyncIterator[ConversationStep]:
         """
-        Handle user's tool approval decision and continue conversation
+        Continue conversation after tool approval - this now supports multi-step tool calling
         
         Args:
             approved_tools: List of tool call IDs that user approved
@@ -157,7 +157,7 @@ class ChatManager:
         """
         
         # Get the last assistant message with tool calls
-        print(f"DEBUG: handle_tool_approval called with {len(approved_tools)} approved, {len(denied_tools)} denied")
+        print(f"DEBUG: continue_conversation_after_tools called with {len(approved_tools)} approved, {len(denied_tools)} denied")
         print(f"DEBUG: Messages in conversation: {len(self.messages)}")
         
         if not self.messages:
@@ -229,49 +229,107 @@ class ChatManager:
             )
             self.messages.append(tool_message)
         
-        # Continue conversation with tool results
+        # Continue the conversation loop after tool execution
         yield ConversationStep(
             state=ConversationState.GENERATING,
             tool_results=tool_results
         )
         
-        # Generate AI's next response
-        try:
-            response = await self.provider.generate(
-                messages=self.messages,
-                tools=self.available_tools
-            )
+        # Start a continuous loop for multi-step conversations
+        iteration = 0
+        while iteration < self.max_tool_iterations:
+            iteration += 1
+            print(f"DEBUG: Conversation iteration {iteration} after tool execution")
             
-            # Add AI response to conversation
-            ai_message = ChatMessage(
-                role="assistant",
-                content=response.content,
-                tool_calls=self._format_tool_calls_for_message(response.tool_calls) if response.tool_calls else None
-            )
-            self.messages.append(ai_message)
-            
-            # Check if AI wants to use more tools
-            if response.tool_calls:
-                yield ConversationStep(
-                    state=ConversationState.TOOL_APPROVAL,
-                    content=response.content,
-                    tool_calls=response.tool_calls
+            try:
+                # Generate AI's next response
+                response = await self.provider.generate(
+                    messages=self.messages,
+                    tools=self.available_tools
                 )
-            else:
-                # Conversation complete
+                
+                # Add AI response to conversation
+                ai_message = ChatMessage(
+                    role="assistant",
+                    content=response.content,
+                    tool_calls=self._format_tool_calls_for_message(response.tool_calls) if response.tool_calls else None
+                )
+                self.messages.append(ai_message)
+                
+                # Check if AI wants to use more tools
+                if response.tool_calls:
+                    print(f"DEBUG: AI wants to call {len(response.tool_calls)} more tools in iteration {iteration}")
+                    yield ConversationStep(
+                        state=ConversationState.TOOL_APPROVAL,
+                        content=response.content,
+                        tool_calls=response.tool_calls
+                    )
+                    # Stop here and wait for the next tool approval - the frontend will call this method again
+                    return
+                else:
+                    # No more tool calls - check if this is truly the end or if we need another iteration
+                    print(f"DEBUG: No tool calls in response, checking if conversation should continue...")
+                    
+                    # For providers like echo_test that require multiple generate() calls to complete multi-step tasks
+                    # we continue the loop to allow the provider to generate more tool calls
+                    yield ConversationStep(
+                        state=ConversationState.GENERATING,
+                        content=response.content
+                    )
+                    
+                    # Try one more generation to see if the provider wants to continue
+                    next_response = await self.provider.generate(
+                        messages=self.messages,
+                        tools=self.available_tools
+                    )
+                    
+                    if next_response.tool_calls:
+                        # Provider wants to continue with more tools
+                        next_ai_message = ChatMessage(
+                            role="assistant",
+                            content=next_response.content,
+                            tool_calls=self._format_tool_calls_for_message(next_response.tool_calls)
+                        )
+                        self.messages.append(next_ai_message)
+                        
+                        print(f"DEBUG: Provider wants to continue with {len(next_response.tool_calls)} more tools")
+                        yield ConversationStep(
+                            state=ConversationState.TOOL_APPROVAL,
+                            content=next_response.content,
+                            tool_calls=next_response.tool_calls
+                        )
+                        return  # Wait for next tool approval
+                    else:
+                        # No more tools needed, conversation is complete
+                        if next_response.content and next_response.content != response.content:
+                            # If the next response has different content, update the conversation
+                            final_ai_message = ChatMessage(
+                                role="assistant",
+                                content=next_response.content,
+                                tool_calls=None
+                            )
+                            self.messages.append(final_ai_message)
+                            
+                            yield ConversationStep(
+                                state=ConversationState.COMPLETED,
+                                content=next_response.content
+                            )
+                        else:
+                            yield ConversationStep(
+                                state=ConversationState.COMPLETED,
+                                content=response.content
+                            )
+                        
+                        # Save final conversation to memory
+                        await self._save_final_conversation()
+                        return
+                        
+            except Exception as e:
                 yield ConversationStep(
                     state=ConversationState.COMPLETED,
-                    content=response.content
+                    error=f"AI generation error: {str(e)}"
                 )
-                
-                # Save final conversation to memory
-                await self._save_final_conversation()
-                
-        except Exception as e:
-            yield ConversationStep(
-                state=ConversationState.COMPLETED,
-                error=f"AI generation error: {str(e)}"
-            )
+                return
     
     def _format_tool_calls_for_message(self, tool_calls: List[ToolCall]) -> List[Dict[str, Any]]:
         """Format tool calls for ChatMessage storage"""
@@ -284,35 +342,46 @@ class ChatManager:
             for tc in tool_calls
         ]
     
-    async def _save_to_memory(self, user_message: str, ai_response: str):
-        """Save simple conversation to memory"""
-        try:
-            self.chat_memory.save_message(
-                project_id=self.project_id,
-                user_message=user_message,
-                ai_response=ai_response
-            )
-        except Exception as e:
-            print(f"Failed to save to memory: {e}")
-    
     async def _save_final_conversation(self):
-        """Save complete conversation with tool calls to memory"""
+        """Save the complete conversation thread to memory"""
         try:
-            # Extract user message and final AI response
+            # Find the last user message that started this conversation
             user_msg = None
-            final_response = None
-            
-            for msg in self.messages:
-                if msg.role == "user" and not user_msg:
+            last_user_index = -1
+            for i, msg in enumerate(self.messages):
+                if msg.role == "user":
+                    last_user_index = i
                     user_msg = msg.content
-                elif msg.role == "assistant":
-                    final_response = msg.content
             
-            if user_msg and final_response:
+            if last_user_index == -1 or not user_msg:
+                print("No user message found for saving")
+                return
+            
+            # Build the complete AI response by concatenating all assistant messages
+            # and tool results from after the last user message
+            full_ai_response_parts = []
+            
+            for i in range(last_user_index + 1, len(self.messages)):
+                msg = self.messages[i]
+                if msg.role == "assistant":
+                    full_ai_response_parts.append(msg.content)
+                elif msg.role == "tool":
+                    # Include tool results in a readable format
+                    tool_name = msg.tool_call_id  # This contains the tool name
+                    tool_result = msg.content
+                    full_ai_response_parts.append(f"[Tool: {tool_name}]\n{tool_result}")
+            
+            if full_ai_response_parts:
+                # Join all parts with double newlines for readability
+                full_ai_response = "\n\n".join(full_ai_response_parts)
+                
+                print(f"Saving complete conversation: user='{user_msg[:50]}...', response length={len(full_ai_response)} chars")
                 self.chat_memory.save_message(
                     project_id=self.project_id,
                     user_message=user_msg,
-                    ai_response=final_response
+                    ai_response=full_ai_response
                 )
+            else:
+                print("No assistant responses found for saving")
         except Exception as e:
             print(f"Failed to save final conversation: {e}")

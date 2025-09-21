@@ -206,12 +206,58 @@ class EchoTestProvider(BaseModelProvider):
             last_message = "No user message found"
         
         # Parse command for tool calling
-        tool_calls = self._parse_tool_command(last_message)
+        tool_calls = self._parse_tool_command(last_message, messages)
+        print(f"DEBUG: Echo provider generate() called with last_message='{last_message}', tool_calls={len(tool_calls)}")
         
-        # Generate response
+        # Count how many tool rounds have already happened for this specific command
+        tool_rounds_completed = 0
+        user_pattern = r"call\s+(\d+)\s+tools?\s+(\d+)\s+times?"
+        
+        # Find the last user message with the tool command pattern
+        last_tool_command_index = -1
+        for i, msg in enumerate(messages):
+            if msg.role == "user" and re.search(user_pattern, msg.content.lower()):
+                last_tool_command_index = i
+                break  # Take the first (latest) match
+        
+        # Count tool calls only after the last tool command
+        if last_tool_command_index >= 0:
+            for i in range(last_tool_command_index + 1, len(messages)):
+                msg = messages[i]
+                if msg.role == "assistant" and msg.tool_calls:
+                    tool_rounds_completed += 1
+        
+        
+        # Generate response based on conversation state
         if tool_calls:
+            # About to call tools
             response_content = f"Echo: {last_message}\n\n🔧 Calling {len(tool_calls)} tools as requested..."
+        elif tool_rounds_completed > 0:
+            # After tool execution, check if this is a continuation response
+            # Look for the original tool command in conversation history
+            user_pattern = r"call\s+(\d+)\s+tools?\s+(\d+)\s+times?"
+            user_match = None
+            
+            # Search through conversation history for the original command
+            for msg in messages:
+                if msg.role == "user":
+                    match = re.search(user_pattern, msg.content.lower())
+                    if match:
+                        user_match = match
+                        break  # Use the first (original) match found
+            
+            if user_match:
+                num_iterations = int(user_match.group(2))
+                if tool_rounds_completed < num_iterations:
+                    # More iterations expected, provide intermediate response
+                    response_content = f"Echo: Completed tool round {tool_rounds_completed}. Continuing with more tools..."
+                else:
+                    # All iterations completed
+                    response_content = f"Echo: All {tool_rounds_completed} tool rounds completed successfully!"
+            else:
+                response_content = f"Echo: Tool execution completed."
         else:
+            # Regular echo without tool calling
             response_content = f"Echo: {last_message}"
         
         return ChatResponse(
@@ -228,12 +274,23 @@ class EchoTestProvider(BaseModelProvider):
             requires_tool_execution=bool(tool_calls)
         )
     
-    def _parse_tool_command(self, message: str) -> List[ToolCall]:
+    def _parse_tool_command(self, message: str, messages: List[ChatMessage] = None) -> List[ToolCall]:
         """Parse message for tool calling commands"""
         
+        # Look for the original tool command in the conversation history
         # Pattern: "call X tools Y times"
         pattern = r"call\s+(\d+)\s+tools?\s+(\d+)\s+times?"
+        
+        # First check the current message
         match = re.search(pattern, message.lower())
+        # If no match in current message, look through conversation history for the original command
+        if not match and messages:
+            for msg in reversed(messages):
+                if msg.role == "user":
+                    user_match = re.search(pattern, msg.content.lower())
+                    if user_match:
+                        match = user_match
+                        break
         
         if not match:
             return []
@@ -248,18 +305,44 @@ class EchoTestProvider(BaseModelProvider):
         if not self.available_tools:
             return []
         
+        # Count how many tool rounds have already happened for this specific command
+        tool_rounds_completed = 0
+        if messages:
+            # Find the last user message with the tool command pattern
+            last_tool_command_index = -1
+            for i, msg in enumerate(messages):
+                if msg.role == "user" and re.search(pattern, msg.content.lower()):
+                    last_tool_command_index = i
+                    print(f"DEBUG: Found tool command at index {i}: '{msg.content}'")
+                    break  # Take the first (latest) match
+            
+            # Count tool calls only after the last tool command
+            if last_tool_command_index >= 0:
+                for i in range(last_tool_command_index + 1, len(messages)):
+                    msg = messages[i]
+                    if msg.role == "assistant" and msg.tool_calls:
+                        tool_rounds_completed += 1
+                        print(f"DEBUG: Found tool call at index {i}, total count now: {tool_rounds_completed}")
+            else:
+                print(f"DEBUG: No tool command found in conversation history")
+        
+        # Only call more tools if we haven't reached the requested number of iterations
+        print(f"DEBUG: _parse_tool_command: tool_rounds_completed={tool_rounds_completed}, num_iterations={num_iterations}")
+        if tool_rounds_completed >= num_iterations:
+            print(f"DEBUG: No more tools needed, reached limit")
+            return []  # No more tools needed
+        
         tool_calls = []
         
-        for iteration in range(num_iterations):
-            # Select random tools for this iteration
-            selected_tools = random.sample(
-                self.available_tools, 
-                min(num_tools, len(self.available_tools))
-            )
-            
-            for i, tool in enumerate(selected_tools):
-                tool_call = self._create_test_tool_call(tool, iteration, i)
-                tool_calls.append(tool_call)
+        # Select random tools for this round
+        selected_tools = random.sample(
+            self.available_tools, 
+            min(num_tools, len(self.available_tools))
+        )
+        
+        for i, tool in enumerate(selected_tools):
+            tool_call = self._create_test_tool_call(tool, tool_rounds_completed, i)
+            tool_calls.append(tool_call)
         
         return tool_calls
     
