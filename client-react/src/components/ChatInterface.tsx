@@ -35,16 +35,18 @@ export function ChatInterface() {
       
       // Convert server format to client format
       const convertedMessages: Message[] = [];
-      messages.forEach((histMsg: any) => {
+      messages.forEach((histMsg: any, histMsgIndex: number) => {
         try {
           // Try to parse the message as JSON structure
           const structuredData = JSON.parse(histMsg.message);
+          console.log('Parsed structured data:', structuredData);
           
           // If it's an array of messages (new format), reconstruct them
           if (Array.isArray(structuredData)) {
             const toolResults: any[] = [];
+            const thisConversationMessages: Message[] = [];
             
-            // First pass: collect all messages and tool results
+            // First pass: collect all messages and tool results for this conversation
             structuredData.forEach((msgData: any, index: number) => {
               if (msgData.role === 'tool') {
                 toolResults.push(msgData);
@@ -65,31 +67,43 @@ export function ChatInterface() {
                 message.needsApproval = false;
               }
 
-              convertedMessages.push(message);
+              thisConversationMessages.push(message);
             });
 
-            // Second pass: associate tool results with assistant messages
+            console.log('Tool results collected for conversation', histMsg.id, ':', toolResults);
+
+            // Second pass: associate tool results with assistant messages by sequence
             if (toolResults.length > 0) {
-              // Find assistant messages that have tool calls and add corresponding results
-              convertedMessages.forEach(message => {
-                if (message.role === 'assistant' && message.tool_calls) {
-                  const messageToolResults = toolResults.filter(toolResult => 
-                    message.tool_calls?.some(tc => tc.id === toolResult.tool_call_id)
-                  );
+              let toolResultIndex = 0;
+              
+              // Go through this conversation's messages in order
+              thisConversationMessages.forEach(message => {
+                if (message.role === 'assistant' && message.tool_calls && toolResultIndex < toolResults.length) {
+                  // Get the next tool results for this message (same number as tool calls)
+                  const numToolCalls = message.tool_calls.length;
+                  const messageToolResults = toolResults.slice(toolResultIndex, toolResultIndex + numToolCalls);
+                  toolResultIndex += numToolCalls;
                   
                   if (messageToolResults.length > 0) {
-                    message.tool_results = messageToolResults.map(toolResult => ({
-                      tool_call_id: toolResult.tool_call_id,
-                      name: toolResult.tool_call_id, // For now, use tool_call_id as name
-                      content: toolResult.content,
-                      success: true, // Assume success if stored
-                      command: toolResult.tool_call_id === 'run_command' ? 
-                        message.tool_calls?.find(tc => tc.id === toolResult.tool_call_id)?.arguments?.command : undefined
-                    }));
+                    message.tool_results = messageToolResults.map((toolResult, index) => {
+                      const correspondingToolCall = message.tool_calls![index];
+                      return {
+                        tool_call_id: correspondingToolCall.id,
+                        name: correspondingToolCall.name,
+                        content: toolResult.content,
+                        success: true, // Assume success if stored
+                        command: correspondingToolCall.name === 'run_command' ? 
+                          correspondingToolCall.arguments?.command : undefined
+                      };
+                    });
+                    console.log('Added tool results to message:', message.id, message.tool_results);
                   }
                 }
               });
             }
+            
+            // Add this conversation's messages to the global array
+            convertedMessages.push(...thisConversationMessages);
           } else {
             // Fallback: treat as plain user message (shouldn't happen with new format)
             convertedMessages.push({
@@ -122,6 +136,7 @@ export function ChatInterface() {
         }
       });
       
+      console.log('Final converted messages:', convertedMessages);
       dispatch({ type: 'SET_MESSAGES', payload: convertedMessages });
     } catch (error) {
       dispatch({ type: 'SET_ERROR', payload: 'Failed to load chat history: ' + (error as Error).message });
@@ -324,8 +339,17 @@ export function ChatInterface() {
                     sessionId={message.sessionId}
                   />
                 )}
-                {message.tool_results && (
-                  <ToolResults toolResults={message.tool_results} />
+                {message.tool_results && message.tool_results.length > 0 && (
+                  <div>
+                    <div style={{ color: 'orange', fontWeight: 'bold' }}>DEBUG: About to render ToolResults for {message.id} with {message.tool_results.length} results</div>
+                    <ToolResults toolResults={message.tool_results} />
+                  </div>
+                )}
+                {message.tool_results && message.tool_results.length === 0 && (
+                  <div style={{ color: 'red' }}>DEBUG: Message {message.id} has empty tool_results array</div>
+                )}
+                {!message.tool_results && message.tool_calls && (
+                  <div style={{ color: 'yellow' }}>DEBUG: Message {message.id} has tool_calls but no tool_results</div>
                 )}
               </div>
             ))
