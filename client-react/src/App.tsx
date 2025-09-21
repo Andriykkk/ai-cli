@@ -7,7 +7,6 @@ import { LoadingOverlay } from './components/LoadingOverlay';
 import { ErrorToast } from './components/ErrorToast';
 import { ContextMenu } from './components/ContextMenu';
 import { SettingEditor } from './components/SettingEditor';
-import { ToolApproval } from './components/ToolApproval';
 import { AppProvider } from './context/AppContext';
 import './App.css';
 
@@ -29,7 +28,6 @@ function App() {
         <ErrorToast />
         <ContextMenu />
         <SettingEditor />
-        <ToolApproval />
       </div>
     </AppProvider>
   );

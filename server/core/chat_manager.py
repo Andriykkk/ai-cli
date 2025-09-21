@@ -343,7 +343,7 @@ class ChatManager:
         ]
     
     async def _save_final_conversation(self):
-        """Save the complete conversation thread to memory"""
+        """Save the structured conversation thread to memory"""
         try:
             # Find the last user message that started this conversation
             user_msg = None
@@ -357,31 +357,67 @@ class ChatManager:
                 print("No user message found for saving")
                 return
             
-            # Build the complete AI response by concatenating all assistant messages
-            # and tool results from after the last user message
-            full_ai_response_parts = []
+            # Build structured conversation data starting from the last user message
+            conversation_messages = []
             
+            # Add the user message
+            from datetime import datetime
+            conversation_messages.append({
+                "role": "user",
+                "content": user_msg,
+                "timestamp": datetime.now().isoformat()
+            })
+            
+            # Add all messages after the user message
             for i in range(last_user_index + 1, len(self.messages)):
                 msg = self.messages[i]
-                if msg.role == "assistant":
-                    full_ai_response_parts.append(msg.content)
-                elif msg.role == "tool":
-                    # Include tool results in a readable format
-                    tool_name = msg.tool_call_id  # This contains the tool name
-                    tool_result = msg.content
-                    full_ai_response_parts.append(f"[Tool: {tool_name}]\n{tool_result}")
-            
-            if full_ai_response_parts:
-                # Join all parts with double newlines for readability
-                full_ai_response = "\n\n".join(full_ai_response_parts)
                 
-                print(f"Saving complete conversation: user='{user_msg[:50]}...', response length={len(full_ai_response)} chars")
+                if msg.role == "assistant":
+                    # Structure assistant message with tool calls and results
+                    message_data = {
+                        "role": "assistant",
+                        "content": msg.content,
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    
+                    # Add tool calls if present
+                    if msg.tool_calls:
+                        message_data["tool_calls"] = msg.tool_calls
+                    
+                    conversation_messages.append(message_data)
+                    
+                elif msg.role == "tool":
+                    # Add tool results to the conversation
+                    conversation_messages.append({
+                        "role": "tool",
+                        "content": msg.content,
+                        "tool_call_id": msg.tool_call_id,
+                        "timestamp": datetime.now().isoformat()
+                    })
+            
+            if conversation_messages:
+                # Save as JSON in the user_message field and a summary in ai_response
+                import json
+                structured_data = json.dumps(conversation_messages)
+                
+                # Create a readable summary for the response field
+                summary_parts = []
+                for msg_data in conversation_messages:
+                    if msg_data["role"] == "assistant":
+                        summary_parts.append(msg_data["content"])
+                    elif msg_data["role"] == "tool":
+                        tool_name = msg_data.get("tool_call_id", "unknown_tool")
+                        summary_parts.append(f"[Tool: {tool_name}]\n{msg_data['content']}")
+                
+                summary = "\n\n".join(summary_parts) if summary_parts else "No response content"
+                
+                print(f"Saving structured conversation: user='{user_msg[:50]}...', {len(conversation_messages)} messages")
                 self.chat_memory.save_message(
                     project_id=self.project_id,
-                    user_message=user_msg,
-                    ai_response=full_ai_response
+                    user_message=structured_data,  # JSON structure in message field
+                    ai_response=summary  # Human-readable summary in response field
                 )
             else:
-                print("No assistant responses found for saving")
+                print("No conversation messages found for saving")
         except Exception as e:
             print(f"Failed to save final conversation: {e}")

@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { Message } from '../types';
+import { InlineToolApproval } from './InlineToolApproval';
+import { ToolResults } from './ToolResults';
 
 export function ChatInterface() {
   const { state, dispatch, api } = useApp();
@@ -34,18 +36,90 @@ export function ChatInterface() {
       // Convert server format to client format
       const convertedMessages: Message[] = [];
       messages.forEach((histMsg: any) => {
-        convertedMessages.push({
-          id: `${histMsg.id}-user`,
-          role: 'user',
-          content: histMsg.message,
-          timestamp: new Date(histMsg.timestamp),
-        });
-        convertedMessages.push({
-          id: `${histMsg.id}-assistant`,
-          role: 'assistant', 
-          content: histMsg.response,
-          timestamp: new Date(histMsg.timestamp),
-        });
+        try {
+          // Try to parse the message as JSON structure
+          const structuredData = JSON.parse(histMsg.message);
+          
+          // If it's an array of messages (new format), reconstruct them
+          if (Array.isArray(structuredData)) {
+            const toolResults: any[] = [];
+            
+            // First pass: collect all messages and tool results
+            structuredData.forEach((msgData: any, index: number) => {
+              if (msgData.role === 'tool') {
+                toolResults.push(msgData);
+                return;
+              }
+
+              const message: Message = {
+                id: `${histMsg.id}-${msgData.role}-${index}`,
+                role: msgData.role,
+                content: msgData.content,
+                timestamp: msgData.timestamp ? new Date(msgData.timestamp) : new Date(histMsg.timestamp),
+              };
+
+              // Add tool calls for assistant messages
+              if (msgData.role === 'assistant' && msgData.tool_calls) {
+                message.tool_calls = msgData.tool_calls;
+                // Don't set needsApproval for historical messages
+                message.needsApproval = false;
+              }
+
+              convertedMessages.push(message);
+            });
+
+            // Second pass: associate tool results with assistant messages
+            if (toolResults.length > 0) {
+              // Find assistant messages that have tool calls and add corresponding results
+              convertedMessages.forEach(message => {
+                if (message.role === 'assistant' && message.tool_calls) {
+                  const messageToolResults = toolResults.filter(toolResult => 
+                    message.tool_calls?.some(tc => tc.id === toolResult.tool_call_id)
+                  );
+                  
+                  if (messageToolResults.length > 0) {
+                    message.tool_results = messageToolResults.map(toolResult => ({
+                      tool_call_id: toolResult.tool_call_id,
+                      name: toolResult.tool_call_id, // For now, use tool_call_id as name
+                      content: toolResult.content,
+                      success: true, // Assume success if stored
+                      command: toolResult.tool_call_id === 'run_command' ? 
+                        message.tool_calls?.find(tc => tc.id === toolResult.tool_call_id)?.arguments?.command : undefined
+                    }));
+                  }
+                }
+              });
+            }
+          } else {
+            // Fallback: treat as plain user message (shouldn't happen with new format)
+            convertedMessages.push({
+              id: `${histMsg.id}-user`,
+              role: 'user',
+              content: histMsg.message,
+              timestamp: new Date(histMsg.timestamp),
+            });
+            convertedMessages.push({
+              id: `${histMsg.id}-assistant`,
+              role: 'assistant', 
+              content: histMsg.response,
+              timestamp: new Date(histMsg.timestamp),
+            });
+          }
+        } catch (e) {
+          // Fallback for old format (plain text)
+          convertedMessages.push({
+            id: `${histMsg.id}-user`,
+            role: 'user',
+            content: histMsg.message,
+            timestamp: new Date(histMsg.timestamp),
+          });
+          convertedMessages.push({
+            id: `${histMsg.id}-assistant`,
+            role: 'assistant', 
+            content: histMsg.response,
+            timestamp: new Date(histMsg.timestamp),
+          });
+        }
       });
       
       dispatch({ type: 'SET_MESSAGES', payload: convertedMessages });
@@ -119,10 +193,12 @@ export function ChatInterface() {
               break;
 
             case 'tool_approval':
-              // First, show the response content
+              // Show the response content with inline tool approval
               if (data.content) {
                 assistantMessage.content = data.content;
                 assistantMessage.tool_calls = data.tool_calls;
+                assistantMessage.needsApproval = true;
+                assistantMessage.sessionId = data.session_id;
                 if (assistantMessageAdded) {
                   dispatch({ type: 'SET_MESSAGES', payload: [...state.messages.slice(0, -1), assistantMessage] });
                 } else {
@@ -131,8 +207,6 @@ export function ChatInterface() {
                 }
               }
               dispatch({ type: 'SET_CONVERSATION_STATE', payload: 'tool_approval' });
-              // Show tool approval UI instead of auto-approving
-              dispatch({ type: 'SET_PENDING_TOOL_CALLS', payload: { content: data.content || '', toolCalls: data.tool_calls || [], sessionId: data.session_id || '' } });
               break;
 
             case 'tool_executing':
@@ -243,16 +317,15 @@ export function ChatInterface() {
                     </details>
                   </div>
                 )}
-                {message.tool_calls && (
-                  <div className="tool-calls">
-                    <h4>Tool Calls:</h4>
-                    {message.tool_calls.map(tool => (
-                      <div key={tool.id} className="tool-call">
-                        <strong>{tool.name}</strong>
-                        <pre>{JSON.stringify(tool.arguments, null, 2)}</pre>
-                      </div>
-                    ))}
-                  </div>
+                {message.needsApproval && message.tool_calls && message.sessionId && (
+                  <InlineToolApproval
+                    messageId={message.id}
+                    toolCalls={message.tool_calls}
+                    sessionId={message.sessionId}
+                  />
+                )}
+                {message.tool_results && (
+                  <ToolResults toolResults={message.tool_results} />
                 )}
               </div>
             ))

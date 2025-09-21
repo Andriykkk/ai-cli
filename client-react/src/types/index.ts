@@ -29,8 +29,10 @@ export interface ToolCall {
 
 export interface ToolResult {
   tool_call_id: string;
-  result: any;
-  error?: string;
+  name: string;
+  content: string;
+  success: boolean;
+  command?: string; // For run_command tools
 }
 
 export type ConversationState = 'idle' | 'generating' | 'tool_approval' | 'tool_executing';
