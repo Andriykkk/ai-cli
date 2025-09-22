@@ -182,22 +182,31 @@ export function Settings() {
       const settingsType = state.settingsType;
       const settingsPath = state.settingsPath;
 
-      // Build the update object
+      // Get existing settings to merge with
+      const existingSettings = settingsType === 'global' 
+        ? state.globalSettings 
+        : state.projectSettings;
+
+      // Deep clone existing settings
+      const updatedSettings = JSON.parse(JSON.stringify(existingSettings || {}));
+
+      // Navigate to the correct nested location and update the value
       const updatePath = [...settingsPath, key];
-      const updateData: any = {};
-      let current = updateData;
+      let current = updatedSettings;
 
       for (let i = 0; i < updatePath.length - 1; i++) {
-        current[updatePath[i]] = {};
+        if (!current[updatePath[i]]) {
+          current[updatePath[i]] = {};
+        }
         current = current[updatePath[i]];
       }
       current[updatePath[updatePath.length - 1]] = { value: convertedValue, type };
 
       // Send update to server
       if (settingsType === 'global') {
-        await api.updateGlobalSettings(updateData);
+        await api.updateGlobalSettings(updatedSettings);
       } else if (state.currentProject) {
-        await api.updateProjectSettings(state.currentProject.id, updateData);
+        await api.updateProjectSettings(state.currentProject.id, updatedSettings);
       }
 
       // Reload settings

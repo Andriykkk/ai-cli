@@ -110,7 +110,7 @@ export class APIClient {
   async updateProjectSettings(projectId: number, settings: Record<string, any>): Promise<void> {
     await this.request<void>(`/settings/projects/${projectId}`, {
       method: 'PUT',
-      body: JSON.stringify({ config_data: settings }),
+      body: JSON.stringify({ project_id: projectId, config_data: settings }),
     });
   }
 
