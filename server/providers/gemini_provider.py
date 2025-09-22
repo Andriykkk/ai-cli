@@ -5,6 +5,7 @@ Implementation for Google's Gemini API with function calling support
 
 import json
 import httpx
+import re
 from typing import Dict, List, Optional, Any, AsyncIterator
 from datetime import datetime
 

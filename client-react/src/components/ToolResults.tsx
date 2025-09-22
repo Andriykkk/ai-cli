@@ -6,7 +6,6 @@ interface ToolResultsProps {
 }
 
 export function ToolResults({ toolResults }: ToolResultsProps) {
-  console.log('ToolResults component rendered with:', toolResults);
   const [expandedResults, setExpandedResults] = useState<Set<string>>(new Set());
 
   const toggleExpanded = (toolCallId: string) => {
@@ -20,12 +19,11 @@ export function ToolResults({ toolResults }: ToolResultsProps) {
   };
 
   return (
-    <div className="tool-results" style={{ border: '2px solid red', margin: '10px', padding: '10px' }}>
+    <div className="tool-results">
       <div className="tool-results-header">
         <span className="tool-results-icon">🔧</span>
         <span className="tool-results-title">Tool Execution Results</span>
       </div>
-      <div style={{ color: 'yellow', fontWeight: 'bold' }}>DEBUG: ToolResults rendered with {toolResults.length} results</div>
       
       <div className="tool-results-list">
         {toolResults.map((result) => {

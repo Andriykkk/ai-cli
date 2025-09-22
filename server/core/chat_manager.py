@@ -157,8 +157,6 @@ class ChatManager:
         """
         
         # Get the last assistant message with tool calls
-        print(f"DEBUG: continue_conversation_after_tools called with {len(approved_tools)} approved, {len(denied_tools)} denied")
-        print(f"DEBUG: Messages in conversation: {len(self.messages)}")
         
         if not self.messages:
             yield ConversationStep(
@@ -168,7 +166,6 @@ class ChatManager:
             return
             
         last_message = self.messages[-1]
-        print(f"DEBUG: Last message role: {last_message.role}, has tool_calls: {bool(last_message.tool_calls)}")
         
         if not last_message.tool_calls:
             yield ConversationStep(
@@ -239,7 +236,6 @@ class ChatManager:
         iteration = 0
         while iteration < self.max_tool_iterations:
             iteration += 1
-            print(f"DEBUG: Conversation iteration {iteration} after tool execution")
             
             try:
                 # Generate AI's next response
@@ -258,7 +254,6 @@ class ChatManager:
                 
                 # Check if AI wants to use more tools
                 if response.tool_calls:
-                    print(f"DEBUG: AI wants to call {len(response.tool_calls)} more tools in iteration {iteration}")
                     yield ConversationStep(
                         state=ConversationState.TOOL_APPROVAL,
                         content=response.content,

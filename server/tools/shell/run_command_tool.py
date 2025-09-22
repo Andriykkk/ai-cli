@@ -132,9 +132,9 @@ class RunCommandTool(BaseTool):
             # Format output
             output_parts = []
             if result["stdout"]:
-                output_parts.append(f"STDOUT:\n{result['stdout']}")
+                output_parts.append(f"{result['stdout']}")
             if result["stderr"]:
-                output_parts.append(f"STDERR:\n{result['stderr']}")
+                output_parts.append(f"{result['stderr']}")
             
             content = "\n\n".join(output_parts) if output_parts else "(no output)"
             

@@ -39,7 +39,6 @@ export function ChatInterface() {
         try {
           // Try to parse the message as JSON structure
           const structuredData = JSON.parse(histMsg.message);
-          console.log('Parsed structured data:', structuredData);
           
           // If it's an array of messages (new format), reconstruct them
           if (Array.isArray(structuredData)) {
@@ -70,7 +69,6 @@ export function ChatInterface() {
               thisConversationMessages.push(message);
             });
 
-            console.log('Tool results collected for conversation', histMsg.id, ':', toolResults);
 
             // Second pass: associate tool results with assistant messages by sequence
             if (toolResults.length > 0) {
@@ -96,7 +94,6 @@ export function ChatInterface() {
                           correspondingToolCall.arguments?.command : undefined
                       };
                     });
-                    console.log('Added tool results to message:', message.id, message.tool_results);
                   }
                 }
               });
@@ -136,7 +133,6 @@ export function ChatInterface() {
         }
       });
       
-      console.log('Final converted messages:', convertedMessages);
       dispatch({ type: 'SET_MESSAGES', payload: convertedMessages });
     } catch (error) {
       dispatch({ type: 'SET_ERROR', payload: 'Failed to load chat history: ' + (error as Error).message });
@@ -339,17 +335,8 @@ export function ChatInterface() {
                     sessionId={message.sessionId}
                   />
                 )}
-                {message.tool_results && message.tool_results.length > 0 && (
-                  <div>
-                    <div style={{ color: 'orange', fontWeight: 'bold' }}>DEBUG: About to render ToolResults for {message.id} with {message.tool_results.length} results</div>
-                    <ToolResults toolResults={message.tool_results} />
-                  </div>
-                )}
-                {message.tool_results && message.tool_results.length === 0 && (
-                  <div style={{ color: 'red' }}>DEBUG: Message {message.id} has empty tool_results array</div>
-                )}
-                {!message.tool_results && message.tool_calls && (
-                  <div style={{ color: 'yellow' }}>DEBUG: Message {message.id} has tool_calls but no tool_results</div>
+                {message.tool_results && (
+                  <ToolResults toolResults={message.tool_results} />
                 )}
               </div>
             ))

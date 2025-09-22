@@ -114,8 +114,8 @@ class EchoTestProvider(BaseModelProvider):
         num_tools = int(match.group(1))
         num_iterations = int(match.group(2))
         
-        # Limit to reasonable numbers
-        num_tools = min(num_tools, len(tools), 5)
+        # Limit to reasonable numbers (but don't limit by available tools count)
+        num_tools = min(num_tools, 5)
         num_iterations = min(num_iterations, 3)
         
         if not tools:
@@ -124,14 +124,11 @@ class EchoTestProvider(BaseModelProvider):
         tool_calls = []
         
         for iteration in range(num_iterations):
-            # Select random tools for this iteration
-            selected_tools = random.sample(
-                tools, 
-                min(num_tools, len(tools))
-            )
-            
-            for i, tool in enumerate(selected_tools):
-                tool_call = self._create_test_tool_call_raw(tool, iteration, i)
+            # Select random tools for this iteration (allow duplicates)
+            for i in range(num_tools):
+                # Pick a random tool (can be the same tool multiple times)
+                selected_tool = random.choice(tools)
+                tool_call = self._create_test_tool_call_raw(selected_tool, iteration, i)
                 tool_calls.append(tool_call)
         
         return tool_calls
@@ -207,7 +204,6 @@ class EchoTestProvider(BaseModelProvider):
         
         # Parse command for tool calling
         tool_calls = self._parse_tool_command(last_message, messages)
-        print(f"DEBUG: Echo provider generate() called with last_message='{last_message}', tool_calls={len(tool_calls)}")
         
         # Count how many tool rounds have already happened for this specific command
         tool_rounds_completed = 0
@@ -298,8 +294,8 @@ class EchoTestProvider(BaseModelProvider):
         num_tools = int(match.group(1))
         num_iterations = int(match.group(2))
         
-        # Limit to reasonable numbers
-        num_tools = min(num_tools, len(self.available_tools), 5)
+        # Limit to reasonable numbers (but don't limit by available tools count)
+        num_tools = min(num_tools, 5)
         num_iterations = min(num_iterations, 3)
         
         if not self.available_tools:
@@ -313,7 +309,6 @@ class EchoTestProvider(BaseModelProvider):
             for i, msg in enumerate(messages):
                 if msg.role == "user" and re.search(pattern, msg.content.lower()):
                     last_tool_command_index = i
-                    print(f"DEBUG: Found tool command at index {i}: '{msg.content}'")
                     break  # Take the first (latest) match
             
             # Count tool calls only after the last tool command
@@ -322,28 +317,19 @@ class EchoTestProvider(BaseModelProvider):
                     msg = messages[i]
                     if msg.role == "assistant" and msg.tool_calls:
                         tool_rounds_completed += 1
-                        print(f"DEBUG: Found tool call at index {i}, total count now: {tool_rounds_completed}")
-            else:
-                print(f"DEBUG: No tool command found in conversation history")
         
         # Only call more tools if we haven't reached the requested number of iterations
-        print(f"DEBUG: _parse_tool_command: tool_rounds_completed={tool_rounds_completed}, num_iterations={num_iterations}")
         if tool_rounds_completed >= num_iterations:
-            print(f"DEBUG: No more tools needed, reached limit")
             return []  # No more tools needed
         
         tool_calls = []
         
-        # Select random tools for this round
-        selected_tools = random.sample(
-            self.available_tools, 
-            min(num_tools, len(self.available_tools))
-        )
-        
-        for i, tool in enumerate(selected_tools):
-            tool_call = self._create_test_tool_call(tool, tool_rounds_completed, i)
+        # Select random tools for this round (allow duplicates)
+        for i in range(num_tools):
+            # Pick a random tool (can be the same tool multiple times)
+            selected_tool = random.choice(self.available_tools)
+            tool_call = self._create_test_tool_call(selected_tool, tool_rounds_completed, i)
             tool_calls.append(tool_call)
-        
         return tool_calls
     
     def _create_test_tool_call(self, tool: ToolDefinition, iteration: int, index: int) -> ToolCall:
