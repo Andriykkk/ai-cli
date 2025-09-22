@@ -15,7 +15,7 @@ export function Settings() {
   const loadAllSettings = async () => {
     try {
       dispatch({ type: 'SET_LOADING', payload: { loading: true, message: 'Loading settings...' } });
-      
+
       // Load global settings
       const globalSettings = await api.getGlobalSettings();
       dispatch({ type: 'SET_GLOBAL_SETTINGS', payload: globalSettings });
@@ -63,14 +63,14 @@ export function Settings() {
   const handleReset = async () => {
     const settingsType = state.settingsType;
     const typeName = settingsType === 'global' ? 'global' : 'project';
-    
+
     if (!window.confirm(`Are you sure you want to reset all ${typeName} settings to their default values?\n\nThis action cannot be undone.`)) {
       return;
     }
 
     try {
       dispatch({ type: 'SET_LOADING', payload: { loading: true, message: 'Resetting settings...' } });
-      
+
       if (settingsType === 'global') {
         await api.resetGlobalSettings();
       } else if (state.currentProject) {
@@ -88,22 +88,57 @@ export function Settings() {
 
   const handleSettingClick = (key: string, value: any) => {
     const isSettingValue = typeof value === 'object' && value.type;
-    
+
     if (isSettingValue) {
       if (value.type === 'action') {
         // Handle action types
         handleActionClick(key, value);
       } else {
-        // Edit this setting
-        const newValue = prompt(`Edit ${key} (${value.type}):`, value.value);
-        if (newValue !== null) {
-          updateSetting(key, newValue, value.type);
+        // Edit this setting based on type
+        if (value.type === 'selector' && value.options) {
+          handleSelectorEdit(key, value);
+        } else {
+          // Use prompt for simple types
+          const newValue = prompt(`Edit ${key} (${value.type}):`, value.value);
+          if (newValue !== null) {
+            updateSetting(key, newValue, value.type);
+          }
         }
       }
     } else {
       // Navigate to category
       const newPath = [...state.settingsPath, key];
       dispatch({ type: 'SET_SETTINGS_PATH', payload: newPath });
+    }
+  };
+
+  const handleSelectorEdit = (key: string, setting: any) => {
+    const options = setting.options;
+    const currentValue = setting.value;
+
+    // Create a selection dialog
+    const optionsText = options.map((opt: string, index: number) =>
+      `${index + 1}. ${opt}${opt === currentValue ? ' (current)' : ''}`
+    ).join('\n');
+
+    const prompt_text = `Select ${key.replace('_', ' ')}:\n\n${optionsText}\n\nEnter number (1-${options.length}) or option name:`;
+    const userInput = prompt(prompt_text, currentValue);
+
+    if (userInput !== null && userInput.trim() !== '') {
+      let selectedValue = userInput.trim();
+
+      // Check if user entered a number
+      const numberChoice = parseInt(selectedValue);
+      if (!isNaN(numberChoice) && numberChoice >= 1 && numberChoice <= options.length) {
+        selectedValue = options[numberChoice - 1];
+      }
+
+      // Validate the selection
+      if (options.includes(selectedValue)) {
+        updateSetting(key, selectedValue, setting.type);
+      } else {
+        alert(`Invalid selection. Please choose from: ${options.join(', ')}`);
+      }
     }
   };
 
@@ -116,10 +151,10 @@ export function Settings() {
       try {
         dispatch({ type: 'SET_LOADING', payload: { loading: true, message: 'Clearing chat history...' } });
         const result = await api.clearProjectChatHistory(state.currentProject.id);
-        
+
         // Clear messages from the current state if we're in the same project
         dispatch({ type: 'SET_MESSAGES', payload: [] });
-        
+
         // Show success message
         alert(`Success: ${result.message}`);
       } catch (error) {
@@ -133,7 +168,7 @@ export function Settings() {
   const updateSetting = async (key: string, value: string, type: string) => {
     try {
       dispatch({ type: 'SET_LOADING', payload: { loading: true, message: 'Updating setting...' } });
-      
+
       // Convert value to proper type
       let convertedValue: any = value;
       if (type === 'boolean') {
@@ -146,12 +181,12 @@ export function Settings() {
 
       const settingsType = state.settingsType;
       const settingsPath = state.settingsPath;
-      
+
       // Build the update object
       const updatePath = [...settingsPath, key];
       const updateData: any = {};
       let current = updateData;
-      
+
       for (let i = 0; i < updatePath.length - 1; i++) {
         current[updatePath[i]] = {};
         current = current[updatePath[i]];
@@ -176,8 +211,8 @@ export function Settings() {
 
   const renderSettingsContent = () => {
     // Get the base settings based on type
-    const baseSettings = state.settingsType === 'global' 
-      ? state.globalSettings 
+    const baseSettings = state.settingsType === 'global'
+      ? state.globalSettings
       : state.projectSettings;
 
     if (!baseSettings || Object.keys(baseSettings).length === 0) {
@@ -208,7 +243,7 @@ export function Settings() {
       <div className="settings-list">
         {/* Back button if not at root */}
         {state.settingsPath.length > 0 && (
-          <div 
+          <div
             className="setting-item category"
             onClick={() => {
               const newPath = state.settingsPath.slice(0, -1);
@@ -221,13 +256,13 @@ export function Settings() {
             <div className="setting-value"></div>
           </div>
         )}
-        
+
         {Object.entries(currentSection).map(([key, value]) => {
           const isSettingValue = typeof value === 'object' && value.type;
-          
+
           return (
-            <div 
-              key={key} 
+            <div
+              key={key}
               className={`setting-item ${isSettingValue && value.type === 'action' ? 'setting-action' : ''}`}
               onClick={() => handleSettingClick(key, value)}
             >
@@ -235,6 +270,11 @@ export function Settings() {
                 <span className="setting-label">{key.replace('_', ' ')}</span>
                 {isSettingValue && (
                   <span className="setting-type">({value.type})</span>
+                )}
+                {isSettingValue && value.type === 'selector' && value.options && (
+                  <span className="setting-options">
+                    Options: {value.options.join(', ')}
+                  </span>
                 )}
               </div>
               <div className="setting-value">
@@ -260,8 +300,8 @@ export function Settings() {
   };
 
   const getBreadcrumb = () => {
-    let breadcrumbText = state.settingsType === 'global' ? 'Global Settings' : 
-                        `Project Settings (${state.currentProject?.name || 'none'})`;
+    let breadcrumbText = state.settingsType === 'global' ? 'Global Settings' :
+      `Project Settings (${state.currentProject?.name || 'none'})`;
     if (state.settingsPath.length > 0) {
       breadcrumbText += ' > ' + state.settingsPath.map(p => p.replace('_', ' ')).join(' > ');
     }
@@ -279,30 +319,30 @@ export function Settings() {
           <h2>Settings</h2>
           <div className="settings-breadcrumb">{getBreadcrumb()}</div>
           <div className="settings-type-switcher">
-            <button 
+            <button
               className={`btn settings-type-btn ${state.settingsType === 'global' ? 'active' : ''}`}
               onClick={handleSwitchToGlobal}
             >
               Global Settings
             </button>
-            <button 
+            <button
               className={`btn settings-type-btn ${state.settingsType === 'project' ? 'active' : ''}`}
               onClick={handleSwitchToProject}
               disabled={!state.currentProject}
             >
-              {state.currentProject ? 
-                `Project Settings (${state.currentProject.name})` : 
+              {state.currentProject ?
+                `Project Settings (${state.currentProject.name})` :
                 'Project Settings (no project selected)'}
             </button>
           </div>
         </div>
-        
+
         <div className="settings-content">
           <div className="settings-navigation">
             {renderSettingsContent()}
           </div>
         </div>
-        
+
         <div className="settings-actions">
           <button className="btn btn-warning" onClick={handleReset}>
             Reset to Defaults

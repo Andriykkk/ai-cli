@@ -98,8 +98,11 @@ class ChatManager:
             
             try:
                 print("Generating AI response...", self.messages, self.available_tools)
+                # Build optimized context to avoid memory/token limits
+                provider_messages = self._build_provider_context()
+                
                 response = await self.provider.generate(
-                    messages=self.messages,
+                    messages=provider_messages,
                     tools=self.available_tools
                 )
                 print("Generated AI response:", response)
@@ -239,8 +242,9 @@ class ChatManager:
             
             try:
                 # Generate AI's next response
+                provider_messages = self._build_provider_context()
                 response = await self.provider.generate(
-                    messages=self.messages,
+                    messages=provider_messages,
                     tools=self.available_tools
                 )
                 
@@ -263,7 +267,6 @@ class ChatManager:
                     return
                 else:
                     # No more tool calls - check if this is truly the end or if we need another iteration
-                    print(f"DEBUG: No tool calls in response, checking if conversation should continue...")
                     
                     # For providers like echo_test that require multiple generate() calls to complete multi-step tasks
                     # we continue the loop to allow the provider to generate more tool calls
@@ -273,8 +276,9 @@ class ChatManager:
                     )
                     
                     # Try one more generation to see if the provider wants to continue
+                    provider_messages = self._build_provider_context()
                     next_response = await self.provider.generate(
-                        messages=self.messages,
+                        messages=provider_messages,
                         tools=self.available_tools
                     )
                     
@@ -287,7 +291,6 @@ class ChatManager:
                         )
                         self.messages.append(next_ai_message)
                         
-                        print(f"DEBUG: Provider wants to continue with {len(next_response.tool_calls)} more tools")
                         yield ConversationStep(
                             state=ConversationState.TOOL_APPROVAL,
                             content=next_response.content,
@@ -336,6 +339,36 @@ class ChatManager:
             }
             for tc in tool_calls
         ]
+    
+    def _build_provider_context(self, max_messages: int = 20) -> List[ChatMessage]:
+        """
+        Build optimized message context for provider to avoid memory/token limits
+        
+        Args:
+            max_messages: Maximum number of recent messages to include
+            
+        Returns:
+            List of recent messages suitable for provider
+        """
+        if len(self.messages) <= max_messages:
+            return self.messages
+        
+        # Take the most recent messages to stay within limits
+        recent_messages = self.messages[-max_messages:]
+        
+        # Always include the first user message if it's a tool command
+        # to preserve context for multi-step operations
+        if len(self.messages) > max_messages:
+            first_message = self.messages[0]
+            if first_message.role == "user":
+                # Check if first message contains tool command patterns
+                import re
+                tool_pattern = r"call\s+(\d+)\s+tools?\s+(\d+)\s+times?"
+                if re.search(tool_pattern, first_message.content.lower()):
+                    # Include first message and remove oldest from recent to maintain count
+                    recent_messages = [first_message] + recent_messages[1:]
+        
+        return recent_messages
     
     async def _save_final_conversation(self):
         """Save the structured conversation thread to memory"""

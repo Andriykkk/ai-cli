@@ -92,7 +92,7 @@ export class APIClient {
   async updateGlobalSettings(settings: Record<string, any>): Promise<void> {
     await this.request<void>('/settings/global', {
       method: 'PUT',
-      body: JSON.stringify(settings),
+      body: JSON.stringify({ config_data: settings }),
     });
   }
 
@@ -110,7 +110,7 @@ export class APIClient {
   async updateProjectSettings(projectId: number, settings: Record<string, any>): Promise<void> {
     await this.request<void>(`/settings/projects/${projectId}`, {
       method: 'PUT',
-      body: JSON.stringify(settings),
+      body: JSON.stringify({ config_data: settings }),
     });
   }
 
