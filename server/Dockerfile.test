@@ -1,0 +1,51 @@
+# Dockerfile for testing AI CLI tools in isolated environment
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies needed for testing
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    wget \
+    tree \
+    file \
+    grep \
+    findutils \
+    coreutils \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root user for security
+RUN useradd -m -u 1000 testuser && \
+    chown -R testuser:testuser /app
+
+# Copy requirements first for better caching
+COPY requirements.txt test-requirements.txt ./
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir -r test-requirements.txt
+
+# Copy source code
+COPY . .
+
+# Create test directories with proper permissions
+RUN mkdir -p /tmp/test_workspace && \
+    chmod 755 /tmp/test_workspace && \
+    chown testuser:testuser /tmp/test_workspace
+
+# Switch to non-root user
+USER testuser
+
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV PYTEST_CURRENT_TEST=""
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import sys; sys.exit(0)"
+
+# Default command
+CMD ["python", "-m", "pytest", "tests/", "-v"]

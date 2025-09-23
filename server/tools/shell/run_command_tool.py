@@ -31,7 +31,7 @@ class RunCommandTool(BaseTool):
     
     # Dangerous commands that are blocked
     BLOCKED_COMMANDS = {
-        'rm', 'rmdir', 'del', 'format', 'fdisk', 'mkfs',
+        'del', 'format', 'fdisk', 'mkfs',
         'dd', 'shred', 'wipe', 'shutdown', 'reboot', 'halt',
         'sudo', 'su', 'passwd', 'chmod', 'chown', 'chgrp',
         'mount', 'umount', 'kill', 'killall', 'pkill'

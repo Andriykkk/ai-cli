@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  test-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    container_name: ai-cli-tests
+    volumes:
+      # Mount source code for live editing during development
+      - .:/app:ro
+      # Create isolated test workspace
+      - test-workspace:/tmp/test_workspace
+    environment:
+      - PYTHONPATH=/app
+      - PYTEST_CURRENT_TEST=""
+      - TEST_ISOLATION=true
+    # Security settings
+    security_opt:
+      - no-new-privileges:true
+    # Resource limits
+    mem_limit: 512m
+    cpus: '1.0'
+    # Network isolation
+    network_mode: none
+    # Read-only root filesystem (except for test workspace)
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=100m
+      - /var/tmp:rw,noexec,nosuid,nodev,size=50m
+    # Drop all capabilities and only add necessary ones
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_OVERRIDE  # For file access in tests
+    # Prevent privilege escalation
+    user: "1000:1000"
+    
+  # Service for running specific test types
+  functional-tests:
+    extends: test-runner
+    container_name: ai-cli-functional-tests
+    command: ["python", "-m", "pytest", "tests/", "-v", "-m", "functional"]
+    
+  security-tests:
+    extends: test-runner
+    container_name: ai-cli-security-tests
+    command: ["python", "-m", "pytest", "tests/", "-v", "-m", "security"]
+    
+  integration-tests:
+    extends: test-runner
+    container_name: ai-cli-integration-tests
+    command: ["python", "-m", "pytest", "tests/", "-v", "-m", "integration"]
+
+volumes:
+  test-workspace:
+    driver: local
