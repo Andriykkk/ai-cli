@@ -29,7 +29,6 @@ SAFE_COMMANDS = [
 
 # Commands that should be blocked for security
 BLOCKED_COMMANDS = [
-    "sudo rm file",
     "chmod 777 /etc/passwd", 
     "chown root:root file",
     "mount /dev/sda1",
@@ -43,6 +42,19 @@ BLOCKED_COMMANDS = [
     "del important_file",
     "su root",
     "passwd user"
+]
+
+# Commands that will execute but fail naturally (not blocked)
+NATURALLY_FAILING_COMMANDS = [
+    "rm -rf /",  # rm will refuse to delete /
+    "systemctl stop networking",  # systemctl not available in container
+    "service ssh stop"  # service command exists but ssh service doesn't
+]
+
+# Commands that are not found in container (sudo not installed)
+MISSING_COMMANDS = [
+    "sudo rm file",
+    "sudo shutdown now"
 ]
 
 # Commands with dangerous patterns

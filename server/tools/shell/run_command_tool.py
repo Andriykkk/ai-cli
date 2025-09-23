@@ -185,36 +185,57 @@ class RunCommandTool(BaseTool):
         Returns:
             Dict with 'safe' boolean and 'reason' string
         """
-        # Parse command to get the base command
+        # Handle empty command
+        if not command.strip():
+            return {"safe": False, "reason": "Empty command"}
+            
+        # Parse command to get all commands (including in chains)
         try:
-            # Split command safely
-            parts = shlex.split(command)
-            if not parts:
-                return {"safe": False, "reason": "Empty command"}
+            command_lower = command.lower()
             
-            base_command = parts[0].split('/')[-1]  # Get command name without path
-            
-            # Check against blocked commands
-            if base_command in self.BLOCKED_COMMANDS:
-                return {"safe": False, "reason": f"Command '{base_command}' is blocked for security"}
-            
-            # Check for dangerous patterns
+            # Check for dangerous patterns first (before parsing)
             dangerous_patterns = [
-                '>/dev/',
+                '> /dev/', '>/dev/',
                 'curl', 'wget', 'nc ', 'netcat',
-                '&& rm ', '&& del ', '; rm ', '; del ',
-                'eval ', 'exec ', '$(', '`'
+                '&& del ', '; del ',
+                'eval', 'exec', '$(', '`',
+                'os.system', 'subprocess.call', 'subprocess.run'
             ]
             
-            command_lower = command.lower()
             for pattern in dangerous_patterns:
                 if pattern in command_lower:
                     return {"safe": False, "reason": f"Command contains dangerous pattern: {pattern}"}
             
+            # Check for command chaining and validate each command
+            # Split on common command separators
+            import re
+            command_parts = re.split(r'[;&|]+', command)
+            
+            for part in command_parts:
+                part = part.strip()
+                if not part:
+                    continue
+                    
+                try:
+                    # Split individual command safely
+                    parts = shlex.split(part)
+                    if not parts:
+                        continue
+                    
+                    base_command = parts[0].split('/')[-1].lower()  # Get command name without path, lowercase
+                    
+                    # Check against blocked commands (case insensitive)
+                    if base_command in self.BLOCKED_COMMANDS:
+                        return {"safe": False, "reason": f"Command '{base_command}' is blocked for security"}
+                        
+                except ValueError as e:
+                    # If we can't parse this part safely, it might be malformed
+                    return {"safe": False, "reason": f"Invalid command syntax: {str(e)}"}
+            
             return {"safe": True, "reason": "Command passed security validation"}
             
-        except ValueError as e:
-            return {"safe": False, "reason": f"Invalid command syntax: {str(e)}"}
+        except Exception as e:
+            return {"safe": False, "reason": f"Command validation error: {str(e)}"}
     
     async def _run_command_async(
         self, 

