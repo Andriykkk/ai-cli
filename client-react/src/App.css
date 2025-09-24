@@ -1159,3 +1159,265 @@ body {
     font-style: italic;
     font-size: 0.9rem;
 }
+
+/* File Operation Display Styles */
+.file-operation-result {
+    background: #2d2d2d;
+    border: 1px solid #444;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.file-operation-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    background: #333;
+    border-bottom: 1px solid #444;
+}
+
+.file-operation-status {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.file-operation-icon {
+    font-size: 1.2rem;
+}
+
+.file-operation-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.file-operation-title {
+    font-weight: 600;
+    color: #e0e0e0;
+    font-size: 0.95rem;
+}
+
+.file-operation-summary {
+    color: #aaa;
+    font-size: 0.85rem;
+}
+
+.file-operation-toggle {
+    background: #444;
+    border: 1px solid #666;
+    color: #e0e0e0;
+    padding: 0.25rem 0.75rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    transition: all 0.2s;
+}
+
+.file-operation-toggle:hover {
+    background: #555;
+    border-color: #777;
+}
+
+.file-operation-error {
+    padding: 1rem;
+    background: #3d1a1a;
+    color: #ff9999;
+}
+
+.file-operation-error pre {
+    font-family: 'Courier New', monospace;
+    font-size: 0.9rem;
+    margin: 0;
+    white-space: pre-wrap;
+}
+
+.file-operation-content {
+    padding: 0;
+}
+
+.file-operation-diff {
+    background: #1a1a1a;
+}
+
+.diff-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    background: #2a2a2a;
+    border-bottom: 1px solid #444;
+}
+
+.diff-file {
+    font-weight: 600;
+    color: #e0e0e0;
+}
+
+.diff-stats {
+    color: #aaa;
+    font-size: 0.85rem;
+}
+
+.file-content-display {
+    background: #1a1a1a;
+}
+
+.file-content-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 1rem;
+    background: #2a2a2a;
+    border-bottom: 1px solid #444;
+}
+
+.file-content-path {
+    font-family: 'Courier New', monospace;
+    color: #e0e0e0;
+    font-size: 0.9rem;
+}
+
+.file-content-language {
+    background: #444;
+    color: #aaa;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+}
+
+.file-content {
+    padding: 1rem;
+    background: #1a1a1a;
+    color: #e0e0e0;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    margin: 0;
+    overflow-x: auto;
+}
+
+/* Language-specific syntax highlighting hints */
+.language-python .file-content { color: #ffd700; }
+.language-javascript .file-content { color: #f7df1e; }
+.language-typescript .file-content { color: #3178c6; }
+.language-css .file-content { color: #1572b6; }
+.language-html .file-content { color: #e34c26; }
+.language-json .file-content { color: #000000; background: #f8f8f2; }
+
+/* Tool Approval File Previews */
+.file-tool-preview {
+    background: #2a2a2a;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 0.75rem;
+    margin-top: 0.5rem;
+}
+
+.file-tool-action {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.file-tool-icon {
+    font-size: 1.1rem;
+}
+
+.file-tool-action code {
+    background: #1a1a1a;
+    padding: 0.25rem 0.5rem;
+    border-radius: 3px;
+    color: #61dafb;
+    font-family: 'Courier New', monospace;
+}
+
+.file-tool-range {
+    color: #aaa;
+    font-size: 0.85rem;
+    margin-top: 0.25rem;
+}
+
+.file-tool-content-preview {
+    margin-top: 0.5rem;
+}
+
+.file-content-summary {
+    color: #aaa;
+    font-size: 0.85rem;
+    margin-bottom: 0.5rem;
+}
+
+.file-content-expandable {
+    margin-top: 0.5rem;
+}
+
+.file-content-expandable summary {
+    color: #61dafb;
+    cursor: pointer;
+    font-size: 0.85rem;
+    margin-bottom: 0.5rem;
+}
+
+.file-content-preview {
+    background: #1a1a1a;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 0.75rem;
+    color: #e0e0e0;
+    font-family: 'Courier New', monospace;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.edit-tool-details {
+    margin-top: 0.5rem;
+}
+
+.edit-search-replace {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.edit-old-text,
+.edit-new-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.edit-text-block {
+    background: #1a1a1a;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 0.5rem;
+    color: #e0e0e0;
+    font-family: 'Courier New', monospace;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    margin: 0;
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.edit-text-block.old {
+    border-left: 3px solid #ff6b6b;
+    background: #2a1a1a;
+}
+
+.edit-text-block.new {
+    border-left: 3px solid #51cf66;
+    background: #1a2a1a;
+}

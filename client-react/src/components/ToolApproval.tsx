@@ -228,6 +228,71 @@ export function ToolApproval() {
                           </div>
                         )}
                       </div>
+                    ) : tool.name === 'read_file' ? (
+                      <div className="file-tool-preview">
+                        <div className="file-tool-action">
+                          <span className="file-tool-icon">📖</span>
+                          <span>Read file: <code>{tool.arguments.file_path}</code></span>
+                        </div>
+                        {tool.arguments.start_line && tool.arguments.end_line ? (
+                          <div className="file-tool-range">
+                            Lines {tool.arguments.start_line} - {tool.arguments.end_line}
+                          </div>
+                        ) : tool.arguments.start_line ? (
+                          <div className="file-tool-range">
+                            From line {tool.arguments.start_line}
+                          </div>
+                        ) : tool.arguments.end_line ? (
+                          <div className="file-tool-range">
+                            Up to line {tool.arguments.end_line}
+                          </div>
+                        ) : (
+                          <div className="file-tool-range">Entire file</div>
+                        )}
+                      </div>
+                    ) : tool.name === 'write_file' ? (
+                      <div className="file-tool-preview">
+                        <div className="file-tool-action">
+                          <span className="file-tool-icon">📝</span>
+                          <span>Write to: <code>{tool.arguments.file_path}</code></span>
+                        </div>
+                        <div className="file-tool-content-preview">
+                          <div className="file-content-summary">
+                            Content: {tool.arguments.content ? 
+                              `${tool.arguments.content.split('\n').length} lines, ${tool.arguments.content.length} characters` : 
+                              'Empty'
+                            }
+                          </div>
+                          {tool.arguments.content && tool.arguments.content.length > 200 && (
+                            <details className="file-content-expandable">
+                              <summary>Preview content</summary>
+                              <pre className="file-content-preview">{tool.arguments.content.substring(0, 500)}{tool.arguments.content.length > 500 ? '...' : ''}</pre>
+                            </details>
+                          )}
+                          {tool.arguments.content && tool.arguments.content.length <= 200 && (
+                            <pre className="file-content-preview">{tool.arguments.content}</pre>
+                          )}
+                        </div>
+                      </div>
+                    ) : tool.name === 'edit_file' ? (
+                      <div className="file-tool-preview">
+                        <div className="file-tool-action">
+                          <span className="file-tool-icon">🔧</span>
+                          <span>Edit file: <code>{tool.arguments.file_path}</code></span>
+                        </div>
+                        <div className="edit-tool-details">
+                          <div className="edit-search-replace">
+                            <div className="edit-old-text">
+                              <strong>Find:</strong>
+                              <pre className="edit-text-block old">{tool.arguments.old_text}</pre>
+                            </div>
+                            <div className="edit-new-text">
+                              <strong>Replace with:</strong>
+                              <pre className="edit-text-block new">{tool.arguments.new_text}</pre>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                     ) : (
                       <div>
                         <strong>Arguments:</strong>

@@ -33,6 +33,7 @@ export interface ToolResult {
   content: string;
   success: boolean;
   command?: string; // For run_command tools
+  metadata?: Record<string, any>; // Tool-specific metadata
 }
 
 export type ConversationState = 'idle' | 'generating' | 'tool_approval' | 'tool_executing';

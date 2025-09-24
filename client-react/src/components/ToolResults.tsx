@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ToolResult } from '../types';
+import { FileOperationDisplay } from './FileOperationDisplay';
 
 interface ToolResultsProps {
   toolResults: ToolResult[];
@@ -29,7 +30,18 @@ export function ToolResults({ toolResults }: ToolResultsProps) {
         {toolResults.map((result) => {
           const isExpanded = expandedResults.has(result.tool_call_id);
           const hasContent = result.content && result.content.trim().length > 0;
+          const isFileOperation = result.name === 'read_file' || result.name === 'write_file' || result.name === 'edit_file';
           
+          // Use enhanced display for file operations
+          if (isFileOperation) {
+            return (
+              <div key={result.tool_call_id} className="tool-result-item file-operation">
+                <FileOperationDisplay result={result} />
+              </div>
+            );
+          }
+          
+          // Default display for other tools
           return (
             <div key={result.tool_call_id} className="tool-result-item">
               <div className="tool-result-header">
