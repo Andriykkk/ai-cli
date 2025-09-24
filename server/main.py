@@ -27,8 +27,9 @@ from routes.chat_memory import router as chat_memory_router
 
 # Import tools
 from tools.tool_manager import get_tool_manager
-# from tools.filesystem.read_file_tool import ReadFileTool
-# from tools.filesystem.write_file_tool import WriteFileTool
+from tools.filesystem.read_file_tool import ReadFileTool
+from tools.filesystem.write_file_tool import WriteFileTool
+from tools.filesystem.edit_file_tool import EditFileTool
 # from tools.filesystem.list_directory_tool import ListDirectoryTool
 # from tools.filesystem.search_files_tool import SearchFilesTool
 from tools.shell.run_command_tool import RunCommandTool
@@ -106,8 +107,9 @@ def init_tools():
     tool_manager = get_tool_manager()
     
     # Filesystem tools
-    # tool_manager.register_tool(ReadFileTool())
-    # tool_manager.register_tool(WriteFileTool())
+    tool_manager.register_tool(ReadFileTool())
+    tool_manager.register_tool(WriteFileTool())
+    tool_manager.register_tool(EditFileTool())
     # tool_manager.register_tool(ListDirectoryTool())
     # tool_manager.register_tool(SearchFilesTool())
     
