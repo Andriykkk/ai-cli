@@ -127,12 +127,16 @@ class ChatManager:
                     return
                 
                 # AI wants to use tools - ask for user approval
+                print(f"DEBUG: About to yield TOOL_APPROVAL with {len(response.tool_calls)} tool calls")
+                print(f"DEBUG: Tool calls: {[{'id': tc.id, 'name': tc.name} for tc in response.tool_calls]}")
+                
                 yield ConversationStep(
                     state=ConversationState.TOOL_APPROVAL,
                     content=response.content,
                     tool_calls=response.tool_calls
                 )
                 
+                print("DEBUG: Successfully yielded TOOL_APPROVAL step")
                 # Wait for user approval (this will be handled by the endpoint)
                 return
                 
@@ -268,55 +272,66 @@ class ChatManager:
                 else:
                     # No more tool calls - check if this is truly the end or if we need another iteration
                     
-                    # For providers like echo_test that require multiple generate() calls to complete multi-step tasks
-                    # we continue the loop to allow the provider to generate more tool calls
-                    yield ConversationStep(
-                        state=ConversationState.GENERATING,
-                        content=response.content
-                    )
-                    
-                    # Try one more generation to see if the provider wants to continue
-                    provider_messages = self._build_provider_context()
-                    next_response = await self.provider.generate(
-                        messages=provider_messages,
-                        tools=self.available_tools
-                    )
-                    
-                    if next_response.tool_calls:
-                        # Provider wants to continue with more tools
-                        next_ai_message = ChatMessage(
-                            role="assistant",
-                            content=next_response.content,
-                            tool_calls=self._format_tool_calls_for_message(next_response.tool_calls)
-                        )
-                        self.messages.append(next_ai_message)
-                        
+                    # Only do additional generation for providers that need it (like echo_test)
+                    if self.provider.provider_name == "echo_test":
+                        # For providers like echo_test that require multiple generate() calls to complete multi-step tasks
                         yield ConversationStep(
-                            state=ConversationState.TOOL_APPROVAL,
-                            content=next_response.content,
-                            tool_calls=next_response.tool_calls
+                            state=ConversationState.GENERATING,
+                            content=response.content
                         )
-                        return  # Wait for next tool approval
-                    else:
-                        # No more tools needed, conversation is complete
-                        if next_response.content and next_response.content != response.content:
-                            # If the next response has different content, update the conversation
-                            final_ai_message = ChatMessage(
+                        
+                        # Try one more generation to see if the provider wants to continue
+                        provider_messages = self._build_provider_context()
+                        next_response = await self.provider.generate(
+                            messages=provider_messages,
+                            tools=self.available_tools
+                        )
+                        
+                        if next_response.tool_calls:
+                            # Provider wants to continue with more tools
+                            next_ai_message = ChatMessage(
                                 role="assistant",
                                 content=next_response.content,
-                                tool_calls=None
+                                tool_calls=self._format_tool_calls_for_message(next_response.tool_calls)
                             )
-                            self.messages.append(final_ai_message)
+                            self.messages.append(next_ai_message)
                             
                             yield ConversationStep(
-                                state=ConversationState.COMPLETED,
-                                content=next_response.content
+                                state=ConversationState.TOOL_APPROVAL,
+                                content=next_response.content,
+                                tool_calls=next_response.tool_calls
                             )
+                            return  # Wait for next tool approval
                         else:
-                            yield ConversationStep(
-                                state=ConversationState.COMPLETED,
-                                content=response.content
-                            )
+                            # No more tools needed, conversation is complete
+                            if next_response.content and next_response.content != response.content:
+                                # If the next response has different content, update the conversation
+                                final_ai_message = ChatMessage(
+                                    role="assistant",
+                                    content=next_response.content,
+                                    tool_calls=None
+                                )
+                                self.messages.append(final_ai_message)
+                                
+                                yield ConversationStep(
+                                    state=ConversationState.COMPLETED,
+                                    content=next_response.content
+                                )
+                            else:
+                                yield ConversationStep(
+                                    state=ConversationState.COMPLETED,
+                                    content=response.content
+                                )
+                            
+                            # Save final conversation to memory
+                            await self._save_final_conversation()
+                            return
+                    else:
+                        # For other providers (like Gemini), conversation is complete after tool execution
+                        yield ConversationStep(
+                            state=ConversationState.COMPLETED,
+                            content=response.content
+                        )
                         
                         # Save final conversation to memory
                         await self._save_final_conversation()

@@ -349,11 +349,14 @@ async def send_message_stream(chat_message: ChatMessage):
                     "timestamp": datetime.now().isoformat()
                 }
                 yield f"data: {json.dumps(step_data)}\n\n"
+                logger.info(f"Successfully yielded step: {step.state.value}")
                 
                 # Clean up session when conversation is complete (no tool calls)
                 if step.state.value == "completed":
                     session_manager.cleanup_session(session_id)
                     logger.info(f"Cleaned up completed session {session_id}")
+                elif step.state.value == "tool_approval":
+                    logger.info(f"Tool approval step yielded, keeping session {session_id} alive")
             
             logger.info("Conversation stream completed")
                 

@@ -6,6 +6,7 @@ Implementation for Google's Gemini API with function calling support
 import json
 import httpx
 import re
+import logging
 from typing import Dict, List, Optional, Any, AsyncIterator
 from datetime import datetime
 
@@ -46,6 +47,9 @@ class GeminiProvider(BaseModelProvider):
             ]
         }
         """
+        logger = logging.getLogger(__name__)
+        logger.info(f"Formatting {len(messages)} messages for Gemini")
+        
         gemini_messages = []
         
         for msg in messages:
@@ -74,7 +78,8 @@ class GeminiProvider(BaseModelProvider):
                 
             elif msg.role == "tool":
                 # Tool result message
-                gemini_messages.append({
+                logger.info(f"Formatting tool result: name={msg.tool_call_id}, content_length={len(msg.content) if msg.content else 0}")
+                tool_response = {
                     "role": "user",  # Tool results are user messages in Gemini
                     "parts": [{
                         "functionResponse": {
@@ -82,7 +87,8 @@ class GeminiProvider(BaseModelProvider):
                             "response": {"content": msg.content}
                         }
                     }]
-                })
+                }
+                gemini_messages.append(tool_response)
                 
             else:
                 # Regular text message
@@ -90,6 +96,15 @@ class GeminiProvider(BaseModelProvider):
                     "role": role,
                     "parts": [{"text": msg.content}]
                 })
+        
+        logger.info(f"Formatted {len(gemini_messages)} messages for Gemini API")
+        for i, msg in enumerate(gemini_messages):
+            role = msg.get('role', 'unknown')
+            parts_count = len(msg.get('parts', []))
+            logger.info(f"Message {i}: role={role}, parts={parts_count}")
+            for j, part in enumerate(msg.get('parts', [])):
+                part_type = list(part.keys())[0] if part else "empty"
+                logger.info(f"  Part {j}: type={part_type}")
         
         return gemini_messages
     
@@ -154,10 +169,36 @@ class GeminiProvider(BaseModelProvider):
         }
         
         try:
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            logger.info(f"Making Gemini API request to {url}")
+            logger.info(f"Payload keys: {list(payload.keys())}")
+            logger.info(f"Messages count: {len(payload.get('contents', []))}")
+            logger.info(f"Tools provided: {bool(tools)}")
+            if payload.get('contents'):
+                last_msg = payload['contents'][-1] if payload['contents'] else None
+                logger.info(f"Last message role: {last_msg.get('role') if last_msg else None}")
+            
             response = await self.client.post(url, json=payload, headers=headers)
+            
+            if not response.is_success:
+                logger.error(f"Gemini API HTTP {response.status_code}: {response.text}")
+                try:
+                    error_details = response.json()
+                    logger.error(f"Gemini error details: {error_details}")
+                except:
+                    logger.error(f"Raw error response: {response.text}")
+            
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            logger.info(f"Gemini response received with {len(result.get('candidates', []))} candidates")
+            return result
         except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Gemini API error: {str(e)}")
+            logger.error(f"Request payload structure: {json.dumps(payload, indent=2)}")
             raise Exception(f"Gemini API error: {str(e)}")
     
     async def call_api_stream(
@@ -206,7 +247,28 @@ class GeminiProvider(BaseModelProvider):
         
         candidates = raw_response.get("candidates", [])
         if not candidates:
-            raise Exception("No candidates in Gemini response")
+            logger.warning("No candidates in Gemini response, returning empty response")
+            logger.warning(f"Raw response: {json.dumps(raw_response, indent=2)}")
+            
+            # Check if there's a finishReason in the response that explains why
+            finish_reason = "stop"
+            if "candidates" in raw_response and len(raw_response["candidates"]) == 0:
+                # Look for any metadata about why there are no candidates
+                if "promptFeedback" in raw_response:
+                    feedback = raw_response["promptFeedback"]
+                    logger.warning(f"Prompt feedback: {feedback}")
+                    if "blockReason" in feedback:
+                        finish_reason = f"blocked_{feedback['blockReason']}"
+            
+            return ChatResponse(
+                content="",
+                model=self.model,
+                usage={},
+                finish_reason=finish_reason,
+                provider="gemini",
+                tool_calls=None,
+                requires_tool_execution=False
+            )
         
         candidate = candidates[0]
         parts = candidate.get("content", {}).get("parts", [])
@@ -220,8 +282,9 @@ class GeminiProvider(BaseModelProvider):
                 content += part["text"]
             elif "functionCall" in part:
                 func_call = part["functionCall"]
+                import random
                 tool_calls.append(ToolCall(
-                    id=f"call_{int(datetime.now().timestamp() * 1000)}",
+                    id=f"gemini_call_{int(datetime.now().timestamp())}_{random.randint(1000, 9999)}",
                     name=func_call["name"],
                     arguments=func_call.get("args", {})
                 ))

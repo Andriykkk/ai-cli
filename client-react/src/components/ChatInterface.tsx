@@ -204,19 +204,39 @@ export function ChatInterface() {
               break;
 
             case 'tool_approval':
-              // Show the response content with inline tool approval
-              if (data.content) {
-                assistantMessage.content = data.content;
+              // Always process tool calls when they exist, regardless of content
+              if (data.tool_calls && data.session_id) {
+                // Set content if provided
+                if (data.content) {
+                  assistantMessage.content = data.content;
+                }
+                
                 assistantMessage.tool_calls = data.tool_calls;
                 assistantMessage.needsApproval = true;
                 assistantMessage.sessionId = data.session_id;
+                
                 if (assistantMessageAdded) {
                   dispatch({ type: 'SET_MESSAGES', payload: [...state.messages.slice(0, -1), assistantMessage] });
                 } else {
                   dispatch({ type: 'ADD_MESSAGE', payload: assistantMessage });
                   assistantMessageAdded = true;
                 }
+                
+                // Set pending tool calls for modal approval
+                dispatch({ 
+                  type: 'SET_PENDING_TOOL_CALLS', 
+                  payload: { 
+                    content: data.content || '', 
+                    toolCalls: data.tool_calls.map((tc: any) => ({
+                      id: tc.id,
+                      name: tc.name,
+                      arguments: tc.arguments
+                    })), 
+                    sessionId: data.session_id 
+                  } 
+                });
               }
+              
               dispatch({ type: 'SET_CONVERSATION_STATE', payload: 'tool_approval' });
               break;
 
