@@ -32,19 +32,19 @@ export function ChatInterface() {
     try {
       dispatch({ type: 'SET_LOADING', payload: { loading: true, message: 'Loading chat history...' } });
       const { messages } = await api.getChatHistory(state.currentProject.id);
-      
+
       // Convert server format to client format
       const convertedMessages: Message[] = [];
       messages.forEach((histMsg: any, histMsgIndex: number) => {
         try {
           // Try to parse the message as JSON structure
           const structuredData = JSON.parse(histMsg.message);
-          
+
           // If it's an array of messages (new format), reconstruct them
           if (Array.isArray(structuredData)) {
             const toolResults: any[] = [];
             const thisConversationMessages: Message[] = [];
-            
+
             // First pass: collect all messages and tool results for this conversation
             structuredData.forEach((msgData: any, index: number) => {
               if (msgData.role === 'tool') {
@@ -73,7 +73,7 @@ export function ChatInterface() {
             // Second pass: associate tool results with assistant messages by sequence
             if (toolResults.length > 0) {
               let toolResultIndex = 0;
-              
+
               // Go through this conversation's messages in order
               thisConversationMessages.forEach(message => {
                 if (message.role === 'assistant' && message.tool_calls && toolResultIndex < toolResults.length) {
@@ -81,7 +81,7 @@ export function ChatInterface() {
                   const numToolCalls = message.tool_calls.length;
                   const messageToolResults = toolResults.slice(toolResultIndex, toolResultIndex + numToolCalls);
                   toolResultIndex += numToolCalls;
-                  
+
                   if (messageToolResults.length > 0) {
                     message.tool_results = messageToolResults.map((toolResult, index) => {
                       const correspondingToolCall = message.tool_calls![index];
@@ -90,15 +90,16 @@ export function ChatInterface() {
                         name: correspondingToolCall.name,
                         content: toolResult.content,
                         success: true, // Assume success if stored
-                        command: correspondingToolCall.name === 'run_command' ? 
-                          correspondingToolCall.arguments?.command : undefined
+                        command: correspondingToolCall.name === 'run_command' ?
+                          correspondingToolCall.arguments?.command : undefined,
+                        metadata: toolResult.metadata || {}
                       };
                     });
                   }
                 }
               });
             }
-            
+
             // Add this conversation's messages to the global array
             convertedMessages.push(...thisConversationMessages);
           } else {
@@ -111,7 +112,7 @@ export function ChatInterface() {
             });
             convertedMessages.push({
               id: `${histMsg.id}-assistant`,
-              role: 'assistant', 
+              role: 'assistant',
               content: histMsg.response,
               timestamp: new Date(histMsg.timestamp),
             });
@@ -126,13 +127,13 @@ export function ChatInterface() {
           });
           convertedMessages.push({
             id: `${histMsg.id}-assistant`,
-            role: 'assistant', 
+            role: 'assistant',
             content: histMsg.response,
             timestamp: new Date(histMsg.timestamp),
           });
         }
       });
-      
+
       dispatch({ type: 'SET_MESSAGES', payload: convertedMessages });
     } catch (error) {
       dispatch({ type: 'SET_ERROR', payload: 'Failed to load chat history: ' + (error as Error).message });
@@ -197,7 +198,7 @@ export function ChatInterface() {
             console.log('Updating session_id:', data.session_id);
             dispatch({ type: 'SET_SESSION_ID', payload: data.session_id });
           }
-          
+
           switch (data.state) {
             case 'generating':
               dispatch({ type: 'SET_CONVERSATION_STATE', payload: 'generating' });
@@ -210,33 +211,33 @@ export function ChatInterface() {
                 if (data.content) {
                   assistantMessage.content = data.content;
                 }
-                
+
                 assistantMessage.tool_calls = data.tool_calls;
                 assistantMessage.needsApproval = true;
                 assistantMessage.sessionId = data.session_id;
-                
+
                 if (assistantMessageAdded) {
                   dispatch({ type: 'SET_MESSAGES', payload: [...state.messages.slice(0, -1), assistantMessage] });
                 } else {
                   dispatch({ type: 'ADD_MESSAGE', payload: assistantMessage });
                   assistantMessageAdded = true;
                 }
-                
+
                 // Set pending tool calls for modal approval
-                dispatch({ 
-                  type: 'SET_PENDING_TOOL_CALLS', 
-                  payload: { 
-                    content: data.content || '', 
+                dispatch({
+                  type: 'SET_PENDING_TOOL_CALLS',
+                  payload: {
+                    content: data.content || '',
                     toolCalls: data.tool_calls.map((tc: any) => ({
                       id: tc.id,
                       name: tc.name,
                       arguments: tc.arguments
-                    })), 
-                    sessionId: data.session_id 
-                  } 
+                    })),
+                    sessionId: data.session_id
+                  }
                 });
               }
-              
+
               dispatch({ type: 'SET_CONVERSATION_STATE', payload: 'tool_approval' });
               break;
 
@@ -361,6 +362,22 @@ export function ChatInterface() {
               </div>
             ))
           )}
+
+          {/* Loading indicator when model is responding */}
+          {(state.conversationState === 'generating' || state.conversationState === 'tool_executing') && (
+            <div className="message assistant loading">
+              <div className="message-content">
+                <div className="loading-dots">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+                <span className="loading-text">
+                  {state.conversationState === 'generating' ? 'AI is thinking...' : 'Executing tools...'}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="input-container">
@@ -375,9 +392,16 @@ export function ChatInterface() {
               placeholder="Type your message..."
               rows={1}
             />
+            <button
+              className="send-button"
+              onClick={handleSendMessage}
+              disabled={!input.trim() || !state.currentProject || state.conversationState !== 'idle'}
+            >
+              Send
+            </button>
           </div>
           <div className="input-status">
-            Type your message and press Enter • ↑↓ History • Ctrl+L Clear • Esc Back
+            Type your message and press Enter
           </div>
         </div>
       </div>

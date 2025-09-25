@@ -121,13 +121,14 @@ class WriteFileTool(BaseTool):
             
             return ToolResult(
                 success=True,
-                content=f"File {action} successfully: {file_path}",
+                content=content,  # Return the actual content for UI display
                 metadata={
                     "file_path": str(file_path),
                     "action": action,
                     "bytes_written": new_size,
                     "lines_written": lines_written,
-                    "old_size": old_size if file_existed else None
+                    "old_size": old_size if file_existed else None,
+                    "operation_summary": f"File {action} successfully: {file_path}"
                 }
             )
             

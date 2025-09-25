@@ -183,16 +183,25 @@ class EditFileTool(BaseTool):
             new_lines = new_text.count('\n') + 1
             line_diff = new_lines - old_lines
             
+            # Create a simple diff-like display for the content
+            diff_content = f"--- {file_path} (original)\n+++ {file_path} (edited)\n\n"
+            diff_content += f"@@ Replaced content @@\n"
+            diff_content += f"- {old_text}\n"
+            diff_content += f"+ {new_text}"
+            
             return ToolResult(
                 success=True,
-                content=f"File edited successfully. Replaced {len(old_text)} characters with {len(new_text)} characters.",
+                content=diff_content,
                 metadata={
                     "file_path": str(file_path),
                     "backup_created": str(backup_path),
                     "old_length": len(old_text),
                     "new_length": len(new_text), 
                     "line_difference": line_diff,
-                    "occurrences_replaced": 1
+                    "occurrences_replaced": 1,
+                    "old_text": old_text,
+                    "new_text": new_text,
+                    "operation_summary": f"File edited successfully. Replaced {len(old_text)} characters with {len(new_text)} characters."
                 }
             )
             

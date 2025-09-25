@@ -204,7 +204,8 @@ class ChatManager:
                         "tool_call_id": tool_call_id,
                         "name": tool_name,
                         "content": result.content if result.success else f"Error: {result.error}",
-                        "success": result.success
+                        "success": result.success,
+                        "metadata": result.metadata if hasattr(result, 'metadata') and result.metadata else {}
                     })
                     
                 except Exception as e:
@@ -212,7 +213,8 @@ class ChatManager:
                         "tool_call_id": tool_call_id,
                         "name": tool_name,
                         "content": f"Tool execution error: {str(e)}",
-                        "success": False
+                        "success": False,
+                        "metadata": {}
                     })
             
             elif tool_call_id in denied_tools:
@@ -221,7 +223,8 @@ class ChatManager:
                     "tool_call_id": tool_call_id,
                     "name": tool_name,
                     "content": "User denied tool execution",
-                    "success": False
+                    "success": False,
+                    "metadata": {}
                 })
         
         # Add tool results to conversation

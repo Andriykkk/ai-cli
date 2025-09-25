@@ -22,6 +22,9 @@ interface FileOperationMetadata {
     start: number;
     end: number;
   };
+  operation_summary?: string;
+  old_text?: string;
+  new_text?: string;
 }
 
 // File extension to language mapping for syntax highlighting classes
@@ -125,6 +128,11 @@ export function FileOperationDisplay({ result }: FileOperationDisplayProps) {
   const getOperationTitle = (toolName: string, success: boolean) => {
     if (!success) return `Failed: ${toolName}`;
     
+    // Use operation_summary from metadata if available
+    if (metadata.operation_summary) {
+      return metadata.operation_summary;
+    }
+    
     switch (toolName) {
       case 'read_file': 
         return metadata.line_range 
@@ -210,7 +218,7 @@ export function FileOperationDisplay({ result }: FileOperationDisplayProps) {
       
       {hasContent && showContent && result.success && (
         <div className="file-operation-content">
-          {result.name === 'edit_file' && metadata.backup_created ? (
+          {result.name === 'edit_file' && metadata.old_text && metadata.new_text ? (
             <div className="file-operation-diff">
               <div className="diff-header">
                 <span className="diff-file">● {metadata.file_path || 'file'}</span>
@@ -220,8 +228,17 @@ export function FileOperationDisplay({ result }: FileOperationDisplayProps) {
                     ` • ${metadata.line_difference > 0 ? '+' : ''}${metadata.line_difference} lines`}
                 </span>
               </div>
-              {/* For now, show the result content. In future, implement proper diff */}
-              <pre className={`file-content language-${language}`}>{result.content}</pre>
+              <div className="github-style-diff">
+                {generateSimpleDiff(metadata.old_text, metadata.new_text).map((line, index) => (
+                  <div key={index} className={`diff-line ${line.type}`}>
+                    <span className="line-number">{line.lineNum}</span>
+                    <span className="line-prefix">
+                      {line.type === 'add' ? '+' : line.type === 'remove' ? '-' : ' '}
+                    </span>
+                    <span className="line-content">{line.content}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           ) : (
             <div className="file-content-display">
