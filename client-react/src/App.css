@@ -1593,3 +1593,20 @@ body {
     max-height: 400px;
     overflow-y: auto;
 }
+
+/* Tool Approval Diff Styles */
+.tool-approval-diff {
+    margin-top: 0.75rem;
+}
+
+.diff-header-small {
+    padding: 0.5rem 0;
+    font-size: 0.9rem;
+    color: #888;
+    border-bottom: 1px solid #333;
+    margin-bottom: 0.5rem;
+}
+
+.tool-approval-diff .github-style-diff {
+    max-height: 300px; /* Smaller max height for approval modal */
+}

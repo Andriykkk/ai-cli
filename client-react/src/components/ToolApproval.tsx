@@ -2,6 +2,37 @@ import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { ToolCall } from '../types';
 
+// Import the diff generator from FileOperationDisplay
+const generateSimpleDiff = (oldContent: string, newContent: string) => {
+  const oldLines = oldContent.split('\n');
+  const newLines = newContent.split('\n');
+  
+  const maxLines = Math.max(oldLines.length, newLines.length);
+  const diffLines = [];
+  
+  for (let i = 0; i < maxLines; i++) {
+    const oldLine = oldLines[i];
+    const newLine = newLines[i];
+    
+    if (oldLine === undefined && newLine !== undefined) {
+      diffLines.push({ type: 'add', content: newLine, lineNum: i + 1 });
+    } else if (oldLine !== undefined && newLine === undefined) {
+      diffLines.push({ type: 'remove', content: oldLine, lineNum: i + 1 });
+    } else if (oldLine !== newLine) {
+      if (oldLine !== undefined) {
+        diffLines.push({ type: 'remove', content: oldLine, lineNum: i + 1 });
+      }
+      if (newLine !== undefined) {
+        diffLines.push({ type: 'add', content: newLine, lineNum: i + 1 });
+      }
+    } else {
+      diffLines.push({ type: 'context', content: oldLine, lineNum: i + 1 });
+    }
+  }
+  
+  return diffLines;
+};
+
 export function ToolApproval() {
   const { state, dispatch, api } = useApp();
   const [approvals, setApprovals] = useState<Record<string, boolean | null>>({});
@@ -275,26 +306,52 @@ export function ToolApproval() {
                         </div>
                       </div>
                     ) : tool.name === 'edit_file' ? (
+                      // Debug: log tool details
+                      (() => { console.log('Edit file tool detected:', tool.name, tool.arguments); return true; })() && (
                       <div className="file-tool-preview">
                         <div className="file-tool-action">
                           <span className="file-tool-icon">🔧</span>
                           <span>Edit file: <code>{tool.arguments.file_path}</code></span>
                         </div>
                         <div className="edit-tool-details">
-                          <div className="edit-search-replace">
-                            <div className="edit-old-text">
-                              <strong>Find:</strong>
-                              <pre className="edit-text-block old">{tool.arguments.old_text}</pre>
+                          {tool.arguments.old_text && tool.arguments.new_text ? (
+                            <div className="tool-approval-diff">
+                              <div className="diff-header-small">
+                                <strong>Changes to be made:</strong>
+                              </div>
+                              <div className="github-style-diff">
+                                {generateSimpleDiff(tool.arguments.old_text, tool.arguments.new_text).map((line, index) => (
+                                  <div key={index} className={`diff-line ${line.type}`}>
+                                    <span className="line-number">{line.lineNum}</span>
+                                    <span className="line-prefix">
+                                      {line.type === 'add' ? '+' : line.type === 'remove' ? '-' : ' '}
+                                    </span>
+                                    <span className="line-content">{line.content}</span>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
-                            <div className="edit-new-text">
-                              <strong>Replace with:</strong>
-                              <pre className="edit-text-block new">{tool.arguments.new_text}</pre>
+                          ) : (
+                            <div className="edit-search-replace">
+                              <div className="edit-old-text">
+                                <strong>Find:</strong>
+                                <pre className="edit-text-block old">{tool.arguments.old_text}</pre>
+                              </div>
+                              <div className="edit-new-text">
+                                <strong>Replace with:</strong>
+                                <pre className="edit-text-block new">{tool.arguments.new_text}</pre>
+                              </div>
                             </div>
-                          </div>
+                          )}
                         </div>
                       </div>
+                      )
                     ) : (
                       <div>
+                        <strong>Tool: {tool.name}</strong>
+                        {tool.name === 'edit_file' ? (
+                          <div style={{color: 'red'}}>EDIT FILE SHOULD BE CAUGHT ABOVE!</div>
+                        ) : null}
                         <strong>Arguments:</strong>
                         <pre className="tool-arguments">
                           {JSON.stringify(tool.arguments, null, 2)}
